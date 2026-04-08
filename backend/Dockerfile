@@ -6,12 +6,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential ffmpeg curl libsndfile1 && \
     rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt .
+COPY backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Download spaCy medical NER model
 RUN pip install --no-cache-dir https://s3-us-west-2.amazonaws.com/ai2-s2-scispacy/releases/v0.5.4/en_core_sci_md-0.5.4.tar.gz
 
+WORKDIR /app
 COPY . .
 RUN mkdir -p data
 
