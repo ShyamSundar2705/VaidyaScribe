@@ -1,0 +1,62 @@
+# Core API
+fastapi==0.115.6
+uvicorn[standard]==0.32.1
+pydantic==2.10.3
+pydantic-settings==2.6.1
+python-multipart==0.0.12
+aiofiles==24.1.0
+
+# Database — free, serverless
+sqlalchemy[asyncio]==2.0.36
+aiosqlite==0.20.0
+alembic==1.14.0
+
+# Vector store — free, serverless
+lancedb==0.14.0
+
+# Agent framework — free, Apache 2.0
+langchain==0.3.13
+langchain-core==0.3.28
+langchain-community==0.3.13
+langgraph==0.2.60
+langgraph-checkpoint-redis==0.0.4
+
+# Ollama (free local LLM)
+langchain-ollama==0.2.2
+ollama==0.4.4
+
+# Groq (free tier fallback — no card needed)
+groq==0.13.0
+langchain-groq==0.2.3
+
+# STT — free, open-source
+faster-whisper==1.1.0
+
+# Translation — free, Apache 2.0
+transformers==4.47.1
+sentencepiece==0.2.0
+torch==2.5.1
+sacremoses==0.1.1
+
+# NLP / NER — free
+spacy==3.8.3
+
+# Audio processing — free
+librosa==0.10.2
+soundfile==0.12.1
+webrtcvad==2.0.10
+
+# PDF generation — free
+weasyprint==62.3
+
+# State / cache
+redis[hiredis]==5.2.1
+
+# HTTP
+httpx==0.28.1
+
+# Utilities
+python-dotenv==1.0.1
+structlog==24.4.0
+tenacity==9.0.0
+numpy==1.26.4

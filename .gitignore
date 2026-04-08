@@ -1,0 +1,130 @@
+# =========================
+
+# 🔐 Environment & Secrets
+
+# =========================
+
+.env
+.env.*
+*.env
+
+# =========================
+
+# 🐍 Python
+
+# =========================
+
+**pycache**/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environments
+
+venv/
+.env/
+ENV/
+env/
+
+# =========================
+
+# 📦 Node / Frontend
+
+# =========================
+
+node_modules/
+dist/
+build/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# =========================
+
+# 🗄️ Database & Storage
+
+# =========================
+
+data/
+*.db
+*.sqlite3
+
+# LanceDB / vector DB
+
+*.lance
+*.arrow
+
+# =========================
+
+# 🧠 ML Models / Large Files
+
+# =========================
+
+models/
+*.bin
+*.pt
+*.pth
+*.onnx
+
+# Whisper cache
+
+.cache/
+.whisper/
+
+# =========================
+
+# 🐳 Docker
+
+# =========================
+
+*.pid
+*.seed
+*.log
+
+# =========================
+
+# 🧪 Testing
+
+# =========================
+
+.pytest_cache/
+.coverage
+htmlcov/
+
+# =========================
+
+# 🧑‍💻 IDE / Editor
+
+# =========================
+
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# =========================
+
+# 🖥️ OS Files
+
+# =========================
+
+.DS_Store
+Thumbs.db
+
+# =========================
+
+# 🔧 Misc
+
+# =========================
+
+*.bak
+*.tmp
+*.temp

@@ -1,0 +1,5 @@
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: system-ui, -apple-system, sans-serif; background: #f8fafc; color: #0f172a; }
+input, textarea { color: #0f172a; }
+input:focus, textarea:focus { outline: 2px solid #38bdf8; outline-offset: 1px; }
+button:active { transform: scale(0.97); }
