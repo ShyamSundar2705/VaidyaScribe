@@ -27,6 +27,7 @@ export interface PipelineResult {
     summary: string;
   } | null;
   needs_review: boolean;
+  doctor_approved: boolean;
   supervisor_reasoning: string | null;
   burnout_alert: boolean;
   error: string | null;

@@ -1,11 +1,13 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
+import { useNavigate } from "react-router-dom";
 import { api } from "../api";
-import { useAppStore } from "../store/app.store";
+import { useAuthStore } from "../store/auth.store";
 
 interface NoteRecord {
   note_id: string;
+  session_id: string;
   date: string;
   doctor_id: string;
   language: string;
@@ -14,12 +16,10 @@ interface NoteRecord {
   icd10_codes: string[];
   soap: { subjective: string; objective: string; assessment: string; plan: string };
   tamil_patient_summary: string | null;
-  // search result fields
   assessment?: string;
   subjective?: string;
   plan?: string;
 }
-
 interface SearchPatient {
   patient_id: string;
   total_notes: number;
@@ -37,14 +37,25 @@ function QABadge({ score }: { score: number }) {
   );
 }
 
-function NoteCard({ note, expanded, onToggle }: {
-  note: NoteRecord; expanded: boolean; onToggle: () => void;
+function NoteCard({ note, patientId, expanded, onToggle }: {
+  note: NoteRecord; patientId: string; expanded: boolean; onToggle: () => void;
 }) {
+  const navigate = useNavigate();
   const date = new Date(note.date).toLocaleDateString("en-IN", {
     day: "numeric", month: "short", year: "numeric",
     hour: "2-digit", minute: "2-digit",
   });
   const assessment = note.soap?.assessment || note.assessment || "Assessment pending";
+
+  const handlePrescription = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    navigate("/prescription", { state: {
+      patientId:  patientId,
+      assessment: note.soap?.assessment || note.assessment || "",
+      plan:       note.soap?.plan || note.plan || "",
+      language:   note.language,
+    }});
+  };
 
   return (
     <div style={{ border: "1px solid #e2e8f0", borderRadius: 10,
@@ -67,6 +78,24 @@ function NoteCard({ note, expanded, onToggle }: {
               fontSize: 10, padding: "2px 6px", borderRadius: 10 }}>{c}</span>
           ))}
           <QABadge score={note.qa_confidence} />
+          <span style={{
+            background: note.doctor_approved ? "#f0fdf4" : "#fff7ed",
+            color: note.doctor_approved ? "#16a34a" : "#c2410c",
+            fontSize: 11, fontWeight: 500, padding: "2px 8px", borderRadius: 12,
+          }}>
+            {note.doctor_approved ? "Approved" : "Pending"}
+          </span>
+          {/* Prescription button — only for approved notes */}
+          {note.doctor_approved && (
+            <button
+              onClick={handlePrescription}
+              title="Generate prescription from this note"
+              style={{ background: "#f1f5f9", color: "#475569", border: "1px solid #e2e8f0",
+                borderRadius: 6, padding: "2px 8px", fontSize: 11, cursor: "pointer",
+                fontWeight: 500 }}>
+              ℞
+            </button>
+          )}
           <svg width="14" height="14" viewBox="0 0 16 16" fill="none"
             style={{ transform: expanded ? "rotate(180deg)" : "none", transition: "transform .15s" }}>
             <path d="M4 6l4 4 4-4" stroke="#94a3b8" strokeWidth="1.5"
@@ -74,6 +103,7 @@ function NoteCard({ note, expanded, onToggle }: {
           </svg>
         </div>
       </div>
+
       <AnimatePresence>
         {expanded && (
           <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }}
@@ -108,6 +138,17 @@ function NoteCard({ note, expanded, onToggle }: {
                   </div>
                 </div>
               )}
+              {note.doctor_approved && (
+                <div style={{ marginTop: 12, display: "flex", gap: 8 }}>
+                  <button onClick={handlePrescription} style={{
+                    background: "#0f172a", color: "#fff", border: "none",
+                    borderRadius: 7, padding: "7px 14px", fontSize: 12,
+                    cursor: "pointer", fontWeight: 500,
+                  }}>
+                    ℞ Generate prescription
+                  </button>
+                </div>
+              )}
             </div>
           </motion.div>
         )}
@@ -116,12 +157,11 @@ function NoteCard({ note, expanded, onToggle }: {
   );
 }
 
-// ─── Patient card (used in search results) ────────────────────────
 function PatientCard({ patient, onSelectPatient }: {
-  patient: SearchPatient;
-  onSelectPatient: (id: string) => void;
+  patient: SearchPatient; onSelectPatient: (id: string) => void;
 }) {
-  const [expanded, setExpanded] = useState(false);
+  const navigate = useNavigate();
+  const [expanded,     setExpanded]     = useState(false);
   const [expandedNote, setExpandedNote] = useState<string | null>(null);
   const lastSeen = new Date(patient.last_seen).toLocaleDateString("en-IN", {
     day: "numeric", month: "short", year: "numeric",
@@ -130,12 +170,9 @@ function PatientCard({ patient, onSelectPatient }: {
   return (
     <div style={{ border: "1px solid #e2e8f0", borderRadius: 12,
       overflow: "hidden", marginBottom: 12, background: "#fff" }}>
-      {/* Patient summary header */}
-      <div style={{ padding: "14px 18px", display: "flex",
-        alignItems: "center", gap: 14 }}>
-        <div style={{ width: 40, height: 40, borderRadius: "50%",
-          background: "#E6F1FB", display: "flex", alignItems: "center",
-          justifyContent: "center", flexShrink: 0 }}>
+      <div style={{ padding: "14px 18px", display: "flex", alignItems: "center", gap: 14 }}>
+        <div style={{ width: 40, height: 40, borderRadius: "50%", background: "#E6F1FB",
+          display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
           <span style={{ fontSize: 14, fontWeight: 600, color: "#185FA5" }}>
             {patient.patient_id.slice(0, 2).toUpperCase()}
           </span>
@@ -145,44 +182,35 @@ function PatientCard({ patient, onSelectPatient }: {
             Patient ID: {patient.patient_id}
           </div>
           <div style={{ fontSize: 12, color: "#64748b" }}>
-            {patient.total_notes} consultation{patient.total_notes !== 1 ? "s" : ""} ·
-            Last seen: {lastSeen}
+            {patient.total_notes} consultation{patient.total_notes !== 1 ? "s" : ""} · Last seen: {lastSeen}
           </div>
-          {/* Most recent assessment as preview */}
           {patient.notes[0]?.assessment && (
-            <div style={{ fontSize: 12, color: "#475569", marginTop: 3,
-              fontStyle: "italic" }}>
+            <div style={{ fontSize: 12, color: "#475569", marginTop: 3, fontStyle: "italic" }}>
               Most recent: {patient.notes[0].assessment}
             </div>
           )}
         </div>
         <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
-          <button
-            onClick={() => onSelectPatient(patient.patient_id)}
+          <button onClick={() => onSelectPatient(patient.patient_id)}
             style={{ background: "#0f172a", color: "#fff", border: "none",
-              borderRadius: 7, padding: "7px 14px", fontSize: 12,
-              cursor: "pointer", fontWeight: 500 }}>
+              borderRadius: 7, padding: "7px 14px", fontSize: 12, cursor: "pointer", fontWeight: 500 }}>
             View all notes
           </button>
-          <button
-            onClick={() => setExpanded(!expanded)}
+          <button onClick={() => setExpanded(!expanded)}
             style={{ background: "#f1f5f9", color: "#475569", border: "none",
               borderRadius: 7, padding: "7px 12px", fontSize: 12, cursor: "pointer" }}>
             {expanded ? "Hide" : "Preview"}
           </button>
         </div>
       </div>
-
-      {/* Expandable note previews */}
       <AnimatePresence>
         {expanded && (
-          <motion.div initial={{ height: 0, opacity: 0 }}
-            animate={{ height: "auto", opacity: 1 }}
+          <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }}
             exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.2 }}
             style={{ overflow: "hidden" }}>
             <div style={{ padding: "0 16px 14px", borderTop: "1px solid #f1f5f9" }}>
               {patient.notes.map(note => (
-                <NoteCard key={note.note_id} note={note}
+                <NoteCard key={note.note_id} note={note} patientId={patient.patient_id}
                   expanded={expandedNote === note.note_id}
                   onToggle={() => setExpandedNote(
                     expandedNote === note.note_id ? null : note.note_id
@@ -196,56 +224,31 @@ function PatientCard({ patient, onSelectPatient }: {
   );
 }
 
-// ─── Main page ────────────────────────────────────────────────────
 export function PatientHistory() {
-  const { doctorId } = useAppStore();
-
-  // Mode: "id" = lookup by patient ID, "search" = keyword search
-  const [mode, setMode] = useState<"id" | "search">("id");
-
-  // ID lookup state
-  const [patientId,   setPatientId]   = useState("");
-  const [searchId,    setSearchId]    = useState("");
-  const [showPending, setShowPending] = useState(false);
-  const [expandedId,  setExpandedId]  = useState<string | null>(null);
-
-  // Keyword search state
+  const { doctorId } = useAuthStore();
+  const [mode,           setMode]           = useState<"id" | "search">("id");
+  const [patientId,      setPatientId]      = useState("");
+  const [searchId,       setSearchId]       = useState("");
+  const [showPending,    setShowPending]     = useState(false);
+  const [expandedId,     setExpandedId]     = useState<string | null>(null);
   const [keyword,        setKeyword]        = useState("");
   const [submittedQuery, setSubmittedQuery] = useState("");
 
-  // ID lookup query
   const idQuery = useQuery({
     queryKey: ["patientNotes", searchId, showPending],
-    queryFn:  () => api.get(
-      `/patients/${searchId}/notes?approved_only=${!showPending}`
-    ).then(r => r.data),
-    enabled: !!searchId && mode === "id",
+    queryFn:  () => api.get(`/patients/${searchId}/notes?approved_only=${!showPending}`).then(r => r.data),
+    enabled:  !!searchId && mode === "id",
   });
 
-  // Keyword search query
   const keywordQuery = useQuery({
     queryKey: ["noteSearch", submittedQuery],
-    queryFn:  () => api.get(
-      `/notes/search?q=${encodeURIComponent(submittedQuery)}&doctor_id=${doctorId}`
-    ).then(r => r.data),
-    enabled: !!submittedQuery && mode === "search",
+    queryFn:  () => api.get(`/notes/search?q=${encodeURIComponent(submittedQuery)}`).then(r => r.data),
+    enabled:  !!submittedQuery && mode === "search",
   });
 
-  const handleIdSearch = () => {
-    if (patientId.trim()) { setSearchId(patientId.trim()); setExpandedId(null); }
-  };
-
-  const handleKeywordSearch = () => {
-    if (keyword.trim()) setSubmittedQuery(keyword.trim());
-  };
-
-  // When user clicks "View all notes" from search results
-  const handleSelectPatient = (pid: string) => {
-    setMode("id");
-    setPatientId(pid);
-    setSearchId(pid);
-    setExpandedId(null);
-  };
+  const handleIdSearch   = () => { if (patientId.trim()) { setSearchId(patientId.trim()); setExpandedId(null); } };
+  const handleKwSearch   = () => { if (keyword.trim()) setSubmittedQuery(keyword.trim()); };
+  const handleSelectPt   = (pid: string) => { setMode("id"); setPatientId(pid); setSearchId(pid); setExpandedId(null); };
 
   const idNotes: NoteRecord[]          = idQuery.data?.notes || [];
   const searchResults: SearchPatient[] = keywordQuery.data?.results || [];
@@ -257,7 +260,7 @@ export function PatientHistory() {
           Patient history
         </h1>
         <p style={{ color: "#64748b", fontSize: 13, margin: 0 }}>
-          Look up past consultation notes by patient ID or search by symptoms, diagnosis, or medication
+          Look up past notes by patient ID or search by symptoms · Click ℞ on any approved note to generate a prescription
         </p>
       </div>
 
@@ -277,7 +280,7 @@ export function PatientHistory() {
         ))}
       </div>
 
-      {/* ── ID lookup mode ────────────────────────────────────────── */}
+      {/* ID mode */}
       {mode === "id" && (
         <>
           <div style={{ display: "flex", gap: 10, marginBottom: 12 }}>
@@ -285,17 +288,14 @@ export function PatientHistory() {
               onKeyDown={e => e.key === "Enter" && handleIdSearch()}
               placeholder="Enter patient ID (e.g. PT-001)"
               style={{ flex: 1, padding: "10px 16px", fontSize: 14,
-                border: "1px solid #e2e8f0", borderRadius: 8,
-                color: "#0f172a", background: "#fff" }} />
+                border: "1px solid #e2e8f0", borderRadius: 8, color: "#0f172a", background: "#fff" }} />
             <button onClick={handleIdSearch} disabled={!patientId.trim()}
-              style={{ background: patientId.trim() ? "#0f172a" : "#94a3b8",
-                color: "#fff", border: "none", borderRadius: 8,
-                padding: "10px 24px", fontSize: 14, fontWeight: 500,
-                cursor: patientId.trim() ? "pointer" : "not-allowed" }}>
+              style={{ background: patientId.trim() ? "#0f172a" : "#94a3b8", color: "#fff",
+                border: "none", borderRadius: 8, padding: "10px 24px", fontSize: 14,
+                fontWeight: 500, cursor: patientId.trim() ? "pointer" : "not-allowed" }}>
               {idQuery.isFetching ? "Loading..." : "Search"}
             </button>
           </div>
-
           {searchId && (
             <label style={{ display: "flex", alignItems: "center", gap: 8,
               fontSize: 12, color: "#64748b", cursor: "pointer", marginBottom: 16 }}>
@@ -305,7 +305,6 @@ export function PatientHistory() {
               Show pending (unapproved) notes
             </label>
           )}
-
           {searchId && (idQuery.isLoading ? (
             <div style={{ color: "#94a3b8", fontSize: 14 }}>Loading...</div>
           ) : idNotes.length === 0 ? (
@@ -315,9 +314,7 @@ export function PatientHistory() {
                 No {showPending ? "" : "approved "}notes for <strong>{searchId}</strong>
               </div>
               <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 14 }}>
-                {!showPending
-                  ? "Notes need doctor approval before appearing here. Tick \"Show pending\" to see drafts."
-                  : "No consultations found for this patient ID."}
+                {!showPending ? "Notes need approval before appearing here." : "No consultations found."}
               </div>
               <button onClick={() => { setMode("search"); setKeyword(searchId); }}
                 style={{ background: "#f1f5f9", color: "#475569", border: "none",
@@ -330,63 +327,51 @@ export function PatientHistory() {
               <div style={{ display: "flex", justifyContent: "space-between",
                 marginBottom: 12, fontSize: 13, color: "#64748b" }}>
                 <span><strong style={{ color: "#0f172a" }}>{idNotes.length}</strong> consultation
-                  {idNotes.length !== 1 ? "s" : ""} for{" "}
-                  <strong style={{ color: "#0f172a" }}>{searchId}</strong></span>
+                  {idNotes.length !== 1 ? "s" : ""} for <strong style={{ color: "#0f172a" }}>{searchId}</strong></span>
                 <span style={{ fontSize: 11, color: "#94a3b8" }}>Most recent first</span>
               </div>
               {idNotes.map(note => (
-                <NoteCard key={note.note_id} note={note}
+                <NoteCard key={note.note_id} note={note} patientId={searchId}
                   expanded={expandedId === note.note_id}
-                  onToggle={() => setExpandedId(
-                    expandedId === note.note_id ? null : note.note_id
-                  )} />
+                  onToggle={() => setExpandedId(expandedId === note.note_id ? null : note.note_id)} />
               ))}
             </>
           ))}
-
           {!searchId && (
             <div style={{ background: "#f8fafc", border: "1px dashed #e2e8f0",
               borderRadius: 10, padding: "36px", textAlign: "center" }}>
               <div style={{ fontSize: 14, color: "#94a3b8", marginBottom: 6 }}>
                 Enter a patient ID to view their consultation history
               </div>
-              <div style={{ fontSize: 12, color: "#cbd5e1", marginBottom: 14 }}>
-                Don't know the patient ID?
-              </div>
-              <button onClick={() => setMode("search")}
-                style={{ background: "#0f172a", color: "#fff", border: "none",
-                  borderRadius: 8, padding: "8px 18px", fontSize: 13,
-                  cursor: "pointer", fontWeight: 500 }}>
-                Search by symptoms or diagnosis instead
+              <button onClick={() => setMode("search")} style={{ marginTop: 8,
+                background: "#0f172a", color: "#fff", border: "none",
+                borderRadius: 8, padding: "8px 18px", fontSize: 13, cursor: "pointer" }}>
+                Search by symptoms instead
               </button>
             </div>
           )}
         </>
       )}
 
-      {/* ── Keyword search mode ───────────────────────────────────── */}
+      {/* Keyword search mode */}
       {mode === "search" && (
         <>
           <div style={{ display: "flex", gap: 10, marginBottom: 8 }}>
             <input value={keyword} onChange={e => setKeyword(e.target.value)}
-              onKeyDown={e => e.key === "Enter" && handleKeywordSearch()}
+              onKeyDown={e => e.key === "Enter" && handleKwSearch()}
               placeholder="Type symptoms, diagnosis, or medication (e.g. chest pain, angina, Metformin)"
               style={{ flex: 1, padding: "10px 16px", fontSize: 14,
-                border: "1px solid #e2e8f0", borderRadius: 8,
-                color: "#0f172a", background: "#fff" }} />
-            <button onClick={handleKeywordSearch} disabled={!keyword.trim()}
-              style={{ background: keyword.trim() ? "#0f172a" : "#94a3b8",
-                color: "#fff", border: "none", borderRadius: 8,
-                padding: "10px 24px", fontSize: 14, fontWeight: 500,
-                cursor: keyword.trim() ? "pointer" : "not-allowed" }}>
+                border: "1px solid #e2e8f0", borderRadius: 8, color: "#0f172a", background: "#fff" }} />
+            <button onClick={handleKwSearch} disabled={!keyword.trim()}
+              style={{ background: keyword.trim() ? "#0f172a" : "#94a3b8", color: "#fff",
+                border: "none", borderRadius: 8, padding: "10px 24px", fontSize: 14,
+                fontWeight: 500, cursor: keyword.trim() ? "pointer" : "not-allowed" }}>
               {keywordQuery.isFetching ? "Searching..." : "Search"}
             </button>
           </div>
-
           <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 20 }}>
-            Searches across assessment, symptoms, plan, and transcript of all your approved notes
+            Searches assessment, symptoms, plan, and transcript · ℞ button appears on approved notes
           </div>
-
           {submittedQuery && (keywordQuery.isLoading ? (
             <div style={{ color: "#94a3b8", fontSize: 14 }}>Searching...</div>
           ) : searchResults.length === 0 ? (
@@ -395,35 +380,27 @@ export function PatientHistory() {
               <div style={{ fontSize: 14, color: "#64748b" }}>
                 No notes found matching <strong>"{submittedQuery}"</strong>
               </div>
-              <div style={{ fontSize: 12, color: "#94a3b8", marginTop: 4 }}>
-                Try different keywords — diagnosis, medication name, or symptom
-              </div>
             </div>
           ) : (
             <>
               <div style={{ fontSize: 13, color: "#64748b", marginBottom: 14 }}>
                 <strong style={{ color: "#0f172a" }}>{searchResults.length}</strong> patient
-                {searchResults.length !== 1 ? "s" : ""} found matching{" "}
-                <strong style={{ color: "#0f172a" }}>"{submittedQuery}"</strong>
+                {searchResults.length !== 1 ? "s" : ""} found for <strong style={{ color: "#0f172a" }}>"{submittedQuery}"</strong>
               </div>
               {searchResults.map(patient => (
                 <PatientCard key={patient.patient_id} patient={patient}
-                  onSelectPatient={handleSelectPatient} />
+                  onSelectPatient={handleSelectPt} />
               ))}
             </>
           ))}
-
           {!submittedQuery && (
             <div style={{ background: "#f8fafc", border: "1px dashed #e2e8f0",
               borderRadius: 10, padding: "36px", textAlign: "center" }}>
-              <div style={{ fontSize: 14, color: "#94a3b8", marginBottom: 8 }}>
-                Search examples
-              </div>
+              <div style={{ fontSize: 14, color: "#94a3b8", marginBottom: 8 }}>Search examples</div>
               {["chest pain", "unstable angina", "Metformin", "asthma", "I20.0"].map(ex => (
                 <button key={ex} onClick={() => { setKeyword(ex); setSubmittedQuery(ex); }}
-                  style={{ background: "#fff", color: "#475569",
-                    border: "1px solid #e2e8f0", borderRadius: 20,
-                    padding: "5px 14px", fontSize: 12, cursor: "pointer",
+                  style={{ background: "#fff", color: "#475569", border: "1px solid #e2e8f0",
+                    borderRadius: 20, padding: "5px 14px", fontSize: 12, cursor: "pointer",
                     margin: "0 4px 6px" }}>
                   {ex}
                 </button>

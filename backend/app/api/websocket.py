@@ -61,7 +61,8 @@ async def consultation_websocket(websocket: WebSocket):
 
                 if msg_type == "start":
                     session_id   = control.get("session_id", str(uuid.uuid4()))
-                    doctor_id    = control.get("doctor_id", "DR-DEMO-001")
+                    # Use JWT-verified doctor_id — NOT the value from the message
+                    # (frontend might send stale DR-DEMO-001 from old app.store)
                     audio_chunks = []
                     await send_progress("init", "Recording started — listening...")
 

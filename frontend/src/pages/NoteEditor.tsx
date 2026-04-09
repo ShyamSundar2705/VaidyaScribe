@@ -4,6 +4,7 @@ import { motion } from "framer-motion";
 import { api } from "../api";
 import toast from "react-hot-toast";
 import { useAppStore } from "../store/app.store";
+import { useAuthStore } from "../store/auth.store";
 
 
 function QAFlag({ flag }: { flag: { field: string; claim: string; reason: string } }) {
@@ -65,7 +66,8 @@ function SOAPSection({
 export function NoteEditor() {
   const { sessionId } = useParams<{ sessionId: string }>();
   const navigate = useNavigate();
-  const { lastResult, doctorId } = useAppStore();
+  const { lastResult } = useAppStore();
+  const { doctorId } = useAuthStore();
   const [approving, setApproving] = useState(false);
 
   // Editable SOAP state
@@ -124,7 +126,7 @@ export function NoteEditor() {
           </div>
         </div>
         <div style={{ display: "flex", gap: 10 }}>
-          {lastResult?.doctor_approved || soap.assessment ? (
+          {lastResult?.doctor_approved === true || soap.assessment ? (
             <button
               onClick={() => navigate("/prescription", { state: {
                 patientId:  lastResult?.session_id,
@@ -223,11 +225,11 @@ export function NoteEditor() {
         {/* Right — Sidebar: transcript, entities, Tamil summary */}
         <div>
           {/* ICD-10 codes */}
-          {lastResult.soap_note?.icd10_codes?.length > 0 && (
+          {(lastResult.soap_note?.icd10_codes?.length ?? 0) > 0 && (
             <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 10, padding: 16, marginBottom: 16 }}>
               <div style={{ fontSize: 11, fontWeight: 500, color: "#94a3b8", marginBottom: 8 }}>ICD-10 CODES</div>
               <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                {lastResult.soap_note.icd10_codes.map(c => (
+                {(lastResult.soap_note?.icd10_codes ?? []).map(c => (
                   <span key={c} style={{ background: "#E6F1FB", color: "#0C447C", fontSize: 11, padding: "2px 8px", borderRadius: 12 }}>
                     {c}
                   </span>

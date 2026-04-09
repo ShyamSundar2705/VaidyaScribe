@@ -42,12 +42,16 @@ async def _transcribe_groq(audio_path: str) -> tuple[str, str]:
             client.audio.transcriptions.create,
             file=(os.path.basename(audio_path), f),
             model="whisper-large-v3",
-            response_format="verbose_json",  # includes language detection
-            language=None,                   # auto-detect Tamil/English
+            response_format="verbose_json",
+            language="en",        # force English output — Tamil words are
+                                  # phonetically transliterated (vandhu, valikuthu)
+                                  # NOT converted to Tamil script (which breaks pipeline)
         )
 
     text = response.text or ""
-    lang = getattr(response, "language", "en") or "en"
+    # When forcing language="en", Groq always reports "en"
+    # Detect Tamil-English mix from the actual words instead
+    lang = "en"
     return text, lang
 
 
@@ -92,14 +96,32 @@ def _detect_mix(segments: list[TranscriptSegment]) -> str:
     return "english"
 
 
+# Tamil words that appear in transliterated Tamil-English speech
+_TAMIL_MARKERS = {
+    "vandhu", "valikuthu", "sollraanga", "irukku", "sollkiraanga",
+    "neram", "kashtam", "konjam", "edukka", "paakanum", "irundhu",
+    "venum", "aachu", "illai", "thaane", "theriyum", "sollu",
+    "pathu", "nalla", "seri", "enna", "evlo", "engge", "eppadi",
+    "romba", "kொnjam", "aama", "illama", "vendam", "kuduthutten",
+    "la", "ku", "nu", "nga", "nga", "raanga", "kaanga", "taanga",
+}
+
 def _lang_from_text(text: str, detected_lang: str) -> str:
     """
-    Heuristic: if detected language is Tamil or text contains
-    Tamil Unicode characters, mark as tamil-english mixed.
+    Detect Tamil-English mix from transliterated words.
+    Since we force Groq to output English, Tamil words appear in
+    Latin script (vandhu, valikuthu) not Tamil Unicode.
     """
+    # Check for Tamil Unicode (local Whisper path)
     tamil_unicode = any("\u0B80" <= c <= "\u0BFF" for c in text)
-    if detected_lang == "ta" or tamil_unicode:
+    if tamil_unicode:
         return "tamil-english"
+
+    # Check for common Tamil transliterations (Groq path)
+    words_lower = set(text.lower().split())
+    if words_lower & _TAMIL_MARKERS:
+        return "tamil-english"
+
     return "english"
 
 
