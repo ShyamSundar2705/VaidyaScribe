@@ -1,19 +1,17 @@
 import { useQuery } from "@tanstack/react-query";
-import axios from "axios";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from "recharts";
 import { useAppStore } from "../store/app.store";
-
-const API = import.meta.env.VITE_API_URL || "http://localhost:8000";
+import { api } from "../api";
 
 function getBurnoutColor(score: number) {
   if (score >= 0.75) return "#ef4444";
-  if (score >= 0.5) return "#f59e0b";
+  if (score >= 0.5)  return "#f59e0b";
   return "#22c55e";
 }
 
 function getBurnoutLabel(score: number) {
   if (score >= 0.75) return "High risk";
-  if (score >= 0.5) return "Moderate";
+  if (score >= 0.5)  return "Moderate";
   return "Healthy";
 }
 
@@ -23,7 +21,7 @@ export function BurnoutDashboard() {
   const { data, isLoading } = useQuery({
     queryKey: ["burnout", doctorId],
     queryFn: async () => {
-      const { data } = await axios.get(`${API}/api/v1/doctors/${doctorId}/burnout`);
+      const { data } = await api.get(`/doctors/${doctorId}/burnout`);
       return data;
     },
     refetchInterval: 60_000,
@@ -32,7 +30,7 @@ export function BurnoutDashboard() {
   const weeks = data?.weeks || [];
   const latest = weeks[0];
   const chartData = [...weeks].reverse().map((w: any) => ({
-    name: w.week.split("-W")[1] ? `W${w.week.split("-W")[1]}` : w.week,
+    name: w.week?.split("-W")[1] ? `W${w.week.split("-W")[1]}` : w.week,
     burnout: Math.round(w.burnout_score * 100),
     hours: w.total_audio_hours,
     notes: w.total_notes,
@@ -53,7 +51,6 @@ export function BurnoutDashboard() {
         <div style={{ color: "#94a3b8", fontSize: 14 }}>Loading metrics...</div>
       ) : (
         <>
-          {/* Current week stats */}
           {latest && (
             <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 28 }}>
               {[
@@ -80,7 +77,6 @@ export function BurnoutDashboard() {
             </div>
           )}
 
-          {/* Bar chart */}
           <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12, padding: 20 }}>
             <div style={{ fontSize: 13, fontWeight: 500, color: "#0f172a", marginBottom: 16 }}>
               Weekly burnout score (%)

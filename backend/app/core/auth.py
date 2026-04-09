@@ -1,14 +1,15 @@
 """
 Authentication core — JWT tokens + bcrypt password hashing.
 
+Uses bcrypt directly (not passlib) — passlib 1.7.4 is incompatible
+with bcrypt>=4.0 which dropped the __about__ attribute.
+
 Tokens expire after 8 hours (one full clinic day).
-Secret key is read from .env — never hardcoded.
 """
 from __future__ import annotations
 from datetime import datetime, timedelta
-from typing import Optional
 from jose import JWTError, jwt
-from passlib.context import CryptContext
+import bcrypt
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,28 +17,30 @@ from sqlalchemy import select
 from app.core.database import get_db
 from app.core.config import settings
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
 
 TOKEN_EXPIRE_HOURS = 8
 
 
 def hash_password(password: str) -> str:
-    return pwd_context.hash(password)
+    """Hash a plain-text password using bcrypt."""
+    salt = bcrypt.gensalt()
+    return bcrypt.hashpw(password.encode("utf-8"), salt).decode("utf-8")
 
 
 def verify_password(plain: str, hashed: str) -> bool:
-    return pwd_context.verify(plain, hashed)
+    """Verify a plain-text password against a bcrypt hash."""
+    return bcrypt.checkpw(plain.encode("utf-8"), hashed.encode("utf-8"))
 
 
 def create_access_token(doctor_id: str, email: str) -> str:
     expire = datetime.utcnow() + timedelta(hours=TOKEN_EXPIRE_HOURS)
     payload = {
-        "sub":       doctor_id,
-        "email":     email,
-        "exp":       expire,
-        "iat":       datetime.utcnow(),
-        "type":      "access",
+        "sub":   doctor_id,
+        "email": email,
+        "exp":   expire,
+        "iat":   datetime.utcnow(),
+        "type":  "access",
     }
     return jwt.encode(payload, settings.SECRET_KEY, algorithm="HS256")
 

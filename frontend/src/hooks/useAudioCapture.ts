@@ -54,11 +54,11 @@ const STEP_LABELS: Record<string, string> = {
   done:        "Complete",
 };
 
-function getWsUrl(): string {
+function getWsUrl(token: string): string {
   if (typeof window === "undefined") return "ws://localhost/ws/consult";
   const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
   const host  = window.location.host;
-  return `${proto}//${host}/ws/consult`;
+  return `${proto}//${host}/ws/consult?token=${encodeURIComponent(token)}`;
 }
 
 export function useAudioCapture(sessionId: string, doctorId: string) {
@@ -81,7 +81,18 @@ export function useAudioCapture(sessionId: string, doctorId: string) {
     setStep("recording");
     setStepLabel("Recording in progress — speak now");
 
-    const ws = new WebSocket(getWsUrl());
+    // Read token directly from localStorage — same as api.ts
+    // avoids Zustand rehydration timing issue
+    let token: string | null = null;
+    try {
+      const raw = localStorage.getItem("vaidyascribe-auth");
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        token = parsed?.state?.token ?? parsed?.token ?? null;
+      }
+    } catch { token = null; }
+    if (!token) { setError("Not authenticated — please log in again"); setStep("error"); return; }
+    const ws = new WebSocket(getWsUrl(token));
     wsRef.current = ws;
 
     ws.onopen = () => {
