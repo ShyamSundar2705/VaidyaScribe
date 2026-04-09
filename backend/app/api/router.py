@@ -4,13 +4,12 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, or_
 from pydantic import BaseModel
 from typing import Optional
 
 from app.core.database import get_db
 from app.models.db_models import ConsultationSession, ClinicalNote, AuditLog, DoctorMetrics
-from app.core.config import settings
 
 api_router = APIRouter()
 
@@ -22,8 +21,9 @@ class ConsentRequest(BaseModel):
     patient_id: Optional[str] = None
     consent_given: bool
 
+
 class ApproveRequest(BaseModel):
-    note_id: str
+    note_id: Optional[str] = None       # actual UUID of ClinicalNote
     doctor_id: str
     soap_subjective: Optional[str] = None
     soap_objective: Optional[str] = None
@@ -47,13 +47,12 @@ async def record_consent(req: ConsentRequest, db: AsyncSession = Depends(get_db)
         status="consent_logged",
     )
     db.add(session)
-    log_entry = AuditLog(
+    db.add(AuditLog(
         session_id=session_id,
         doctor_id=req.doctor_id,
         action="CONSENT_GIVEN" if req.consent_given else "CONSENT_DECLINED",
         metadata={"patient_id": req.patient_id, "timestamp": datetime.utcnow().isoformat()},
-    )
-    db.add(log_entry)
+    ))
     await db.commit()
     return {"session_id": session_id, "consent_given": req.consent_given}
 
@@ -80,7 +79,7 @@ async def get_session(session_id: str, db: AsyncSession = Depends(get_db)):
 
 @api_router.get("/notes/{session_id}")
 async def get_note(session_id: str, db: AsyncSession = Depends(get_db)):
-    """Fetch the generated SOAP note for a session."""
+    """Fetch note by session_id."""
     result = await db.execute(
         select(ClinicalNote).where(ClinicalNote.session_id == session_id)
     )
@@ -95,45 +94,59 @@ async def get_note(session_id: str, db: AsyncSession = Depends(get_db)):
         "entities": note.entities,
         "soap": {
             "subjective": note.soap_subjective,
-            "objective": note.soap_objective,
+            "objective":  note.soap_objective,
             "assessment": note.soap_assessment,
-            "plan": note.soap_plan,
+            "plan":       note.soap_plan,
         },
-        "icd10_codes": note.icd10_codes,
-        "tamil_patient_summary": note.tamil_patient_summary,
-        "qa_confidence": note.qa_confidence,
-        "qa_flags": note.qa_flags,
-        "qa_status": note.qa_status,
-        "doctor_approved": note.doctor_approved,
-        "created_at": note.created_at.isoformat(),
+        "icd10_codes":            note.icd10_codes,
+        "tamil_patient_summary":  note.tamil_patient_summary,
+        "qa_confidence":          note.qa_confidence,
+        "qa_flags":               note.qa_flags,
+        "qa_status":              note.qa_status,
+        "doctor_approved":        note.doctor_approved,
+        "created_at":             note.created_at.isoformat(),
     }
 
 
 @api_router.post("/notes/{note_id}/approve")
-async def approve_note(req: ApproveRequest, db: AsyncSession = Depends(get_db)):
-    """Doctor approves (and optionally edits) the SOAP note."""
+async def approve_note(note_id: str, req: ApproveRequest, db: AsyncSession = Depends(get_db)):
+    """
+    Doctor approves the SOAP note.
+    Looks up by note UUID first, falls back to session_id lookup
+    so the URL /notes/{session_id}/approve also works.
+    """
+    # Try note.id first, then note.session_id (URL may carry either)
     result = await db.execute(
-        select(ClinicalNote).where(ClinicalNote.id == req.note_id)
+        select(ClinicalNote).where(
+            or_(
+                ClinicalNote.id         == note_id,
+                ClinicalNote.session_id == note_id,
+            )
+        )
     )
     note = result.scalar_one_or_none()
-    if not note:
-        raise HTTPException(status_code=404, detail="Note not found")
 
-    # Apply any edits from the doctor
-    if req.soap_subjective:
+    if not note:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Note not found for id/session_id: {note_id}"
+        )
+
+    # Apply inline edits if doctor changed any section
+    if req.soap_subjective is not None:
         note.soap_subjective = req.soap_subjective
-    if req.soap_objective:
+    if req.soap_objective is not None:
         note.soap_objective = req.soap_objective
-    if req.soap_assessment:
+    if req.soap_assessment is not None:
         note.soap_assessment = req.soap_assessment
-    if req.soap_plan:
+    if req.soap_plan is not None:
         note.soap_plan = req.soap_plan
 
     note.doctor_approved = True
-    note.doctor_edited = req.edited
-    note.approved_at = datetime.utcnow()
+    note.doctor_edited   = req.edited
+    note.approved_at     = datetime.utcnow()
 
-    # Update session status
+    # Update parent session status
     sess_result = await db.execute(
         select(ConsultationSession).where(ConsultationSession.id == note.session_id)
     )
@@ -141,24 +154,26 @@ async def approve_note(req: ApproveRequest, db: AsyncSession = Depends(get_db)):
     if session:
         session.status = "approved"
 
-    # Audit log
     db.add(AuditLog(
         session_id=note.session_id,
         doctor_id=req.doctor_id,
-        action="NOTE_APPROVED" if not req.edited else "NOTE_EDITED_AND_APPROVED",
+        action="NOTE_EDITED_AND_APPROVED" if req.edited else "NOTE_APPROVED",
         metadata={"note_id": note.id, "edited": req.edited},
     ))
     await db.commit()
-    return {"approved": True, "note_id": note.id, "edited": req.edited}
+    return {"approved": True, "note_id": note.id, "session_id": note.session_id}
 
 
 # ─── Export endpoints ─────────────────────────────────────────────
 
 @api_router.get("/notes/{note_id}/export/pdf")
 async def export_pdf(note_id: str, db: AsyncSession = Depends(get_db)):
-    """Generate and download a PDF of the approved SOAP note."""
-    note_result = await db.execute(select(ClinicalNote).where(ClinicalNote.id == note_id))
-    note = note_result.scalar_one_or_none()
+    result = await db.execute(
+        select(ClinicalNote).where(
+            or_(ClinicalNote.id == note_id, ClinicalNote.session_id == note_id)
+        )
+    )
+    note = result.scalar_one_or_none()
     if not note or not note.doctor_approved:
         raise HTTPException(status_code=404, detail="Approved note not found")
 
@@ -169,14 +184,18 @@ async def export_pdf(note_id: str, db: AsyncSession = Depends(get_db)):
 
     from app.services.pdf_service import generate_pdf
     pdf_path = await generate_pdf(note, session)
-    return FileResponse(pdf_path, media_type="application/pdf", filename=f"soap_note_{note_id[:8]}.pdf")
+    return FileResponse(pdf_path, media_type="application/pdf",
+                        filename=f"soap_note_{note.id[:8]}.pdf")
 
 
 @api_router.get("/notes/{note_id}/export/fhir")
 async def export_fhir(note_id: str, db: AsyncSession = Depends(get_db)):
-    """Export FHIR R4 DocumentReference bundle."""
-    note_result = await db.execute(select(ClinicalNote).where(ClinicalNote.id == note_id))
-    note = note_result.scalar_one_or_none()
+    result = await db.execute(
+        select(ClinicalNote).where(
+            or_(ClinicalNote.id == note_id, ClinicalNote.session_id == note_id)
+        )
+    )
+    note = result.scalar_one_or_none()
     if not note or not note.doctor_approved:
         raise HTTPException(status_code=404, detail="Approved note not found")
 
@@ -187,14 +206,14 @@ async def export_fhir(note_id: str, db: AsyncSession = Depends(get_db)):
 
     from app.services.fhir_service import export_fhir_json
     fhir_path = await export_fhir_json(note, session)
-    return FileResponse(fhir_path, media_type="application/json", filename=f"fhir_{note_id[:8]}.json")
+    return FileResponse(fhir_path, media_type="application/json",
+                        filename=f"fhir_{note.id[:8]}.json")
 
 
 # ─── Burnout dashboard ────────────────────────────────────────────
 
 @api_router.get("/doctors/{doctor_id}/burnout")
 async def get_burnout(doctor_id: str):
-    """Return the last 4 weeks of burnout metrics for a doctor."""
     from app.services.burnout_service import get_doctor_burnout_dashboard
     data = await get_doctor_burnout_dashboard(doctor_id)
     return {"doctor_id": doctor_id, "weeks": data}
@@ -202,7 +221,6 @@ async def get_burnout(doctor_id: str):
 
 @api_router.get("/doctors/{doctor_id}/notes/recent")
 async def get_recent_notes(doctor_id: str, limit: int = 10, db: AsyncSession = Depends(get_db)):
-    """Fetch a doctor's recent notes for the history panel."""
     result = await db.execute(
         select(ClinicalNote)
         .where(ClinicalNote.doctor_id == doctor_id)
@@ -212,12 +230,12 @@ async def get_recent_notes(doctor_id: str, limit: int = 10, db: AsyncSession = D
     notes = result.scalars().all()
     return [
         {
-            "id": n.id,
-            "session_id": n.session_id,
-            "created_at": n.created_at.isoformat(),
+            "id":             n.id,
+            "session_id":     n.session_id,
+            "created_at":     n.created_at.isoformat(),
             "doctor_approved": n.doctor_approved,
-            "qa_confidence": n.qa_confidence,
-            "icd10_codes": n.icd10_codes,
+            "qa_confidence":  n.qa_confidence,
+            "icd10_codes":    n.icd10_codes,
         }
         for n in notes
     ]

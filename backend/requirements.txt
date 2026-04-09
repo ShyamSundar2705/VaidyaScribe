@@ -60,3 +60,7 @@ python-dotenv==1.0.1
 structlog==24.4.0
 tenacity==9.0.0
 numpy==1.26.4
+
+#testing
+pytest
+pytest-asyncio

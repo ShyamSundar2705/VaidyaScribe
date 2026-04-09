@@ -1,11 +1,10 @@
 import { useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
-import axios from "axios";
+import { api } from "../api";
 import toast from "react-hot-toast";
 import { useAppStore } from "../store/app.store";
 
-const API = import.meta.env.VITE_API_URL || "http://localhost:8000";
 
 function QAFlag({ flag }: { flag: { field: string; claim: string; reason: string } }) {
   return (
@@ -86,8 +85,8 @@ export function NoteEditor() {
     if (!lastResult) return;
     setApproving(true);
     try {
-      const noteId = sessionId; // for demo, session_id == note_id
-      await axios.post(`${API}/api/v1/notes/${noteId}/approve`, {
+      const noteId = lastResult?.note_id || sessionId;
+      await api.post(`/notes/${noteId}/approve`, {
         note_id: noteId,
         doctor_id: doctorId,
         ...soap,

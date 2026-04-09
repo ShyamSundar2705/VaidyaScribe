@@ -6,6 +6,7 @@ export type PipelineStep =
 
 export interface PipelineResult {
   session_id: string;
+  note_id: string | null;
   transcript: string;
   transcript_original: string;
   language_mix: string;

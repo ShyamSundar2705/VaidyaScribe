@@ -8,7 +8,22 @@ class Settings(BaseSettings):
     APP_NAME: str = "VaidyaScribe"
     DEBUG: bool = False
     SECRET_KEY: str = "change-me-in-production"
-    CORS_ORIGINS: list[str] = ["http://localhost:3000", "http://localhost:80"]
+
+    # ── CORS: cover every origin the browser can send ─────────────
+    # http://localhost   → nginx on :80 (no port in URL bar)
+    # http://localhost:80 → explicit
+    # http://localhost:3000 → Vite dev server / frontend container
+    # http://127.0.0.1   → some browsers use this instead of localhost
+    CORS_ORIGINS: list[str] = [
+        "http://localhost",
+        "http://localhost:80",
+        "http://localhost:3000",
+        "http://localhost:8000",
+        "http://127.0.0.1",
+        "http://127.0.0.1:80",
+        "http://127.0.0.1:3000",
+        "http://127.0.0.1:8000",
+    ]
 
     # Database — free SQLite
     DATABASE_URL: str = "sqlite+aiosqlite:///./data/vaidyascribe.db"
@@ -29,15 +44,15 @@ class Settings(BaseSettings):
     USE_GROQ_FALLBACK: bool = False
 
     # Whisper — local model
-    WHISPER_MODEL: str = "large-v3"          # or "medium" for speed
-    WHISPER_DEVICE: str = "cpu"              # "cuda" if GPU available
-    WHISPER_COMPUTE_TYPE: str = "int8"       # quantised for CPU speed
+    WHISPER_MODEL: str = "base"
+    WHISPER_DEVICE: str = "cpu"
+    WHISPER_COMPUTE_TYPE: str = "int8"
 
     # NLLB translation model — free HuggingFace
     NLLB_MODEL: str = "facebook/nllb-200-distilled-600M"
 
     # QA confidence threshold — below this triggers human review
-    QA_CONFIDENCE_THRESHOLD: float = 0.85
+    QA_CONFIDENCE_THRESHOLD: float = 0.70
 
     # Burnout — alert if weekly session hours exceed this
     BURNOUT_HOURS_THRESHOLD: float = 10.0

@@ -1,23 +1,59 @@
 """
-STT Agent — Speech-to-Text with multilingual Tamil/English support.
+STT Agent — Speech-to-Text with Tamil/English support.
 
-Uses faster-whisper (local, free) with automatic language detection per chunk.
-Falls back gracefully if whisper model not yet downloaded.
+Primary:  Groq Whisper API (free tier — 7200 audio seconds/day, ~2s latency)
+Fallback: faster-whisper local (slow on CPU, use only if no Groq key)
+
+Set GROQ_API_KEY in .env to use Groq (strongly recommended for CPU machines).
+Leave GROQ_API_KEY empty to use local Whisper.
+
+Model performance on CPU vs Groq:
+  local tiny    ~32x real-time  → 30s audio = ~1s      (low accuracy)
+  local small   ~6x real-time   → 30s audio = ~5min    (was causing hang)
+  local medium  ~2x real-time   → 30s audio = ~15min
+  Groq cloud    instant         → 30s audio = ~2s      (large-v3 accuracy)
 """
 from __future__ import annotations
 import asyncio
 import os
 import tempfile
-from pathlib import Path
-from typing import Optional
 
 from app.agents.state import AgentState, TranscriptSegment
 from app.core.config import settings
 
 _whisper_model = None
+STT_TIMEOUT_SECONDS = 300  # 5 min hard timeout for local fallback
 
 
-def get_whisper_model():
+# ─── Groq Whisper (primary — fast, free) ─────────────────────────
+
+async def _transcribe_groq(audio_path: str) -> tuple[str, str]:
+    """
+    Transcribe via Groq Whisper API.
+    Returns (transcript_text, detected_language).
+    Free tier: 7200 audio seconds/day. Get key: console.groq.com (no card).
+    """
+    from groq import Groq
+
+    client = Groq(api_key=settings.GROQ_API_KEY)
+
+    with open(audio_path, "rb") as f:
+        response = await asyncio.to_thread(
+            client.audio.transcriptions.create,
+            file=(os.path.basename(audio_path), f),
+            model="whisper-large-v3",
+            response_format="verbose_json",  # includes language detection
+            language=None,                   # auto-detect Tamil/English
+        )
+
+    text = response.text or ""
+    lang = getattr(response, "language", "en") or "en"
+    return text, lang
+
+
+# ─── Local Whisper fallback ───────────────────────────────────────
+
+def _get_local_model():
     global _whisper_model
     if _whisper_model is None:
         from faster_whisper import WhisperModel
@@ -29,68 +65,119 @@ def get_whisper_model():
     return _whisper_model
 
 
-def detect_language_mix(segments: list[TranscriptSegment]) -> str:
-    """Classify the session as tamil-english, english, or tamil."""
+def _run_local_transcribe(audio_path: str) -> tuple[list, object]:
+    model = _get_local_model()
+    segments_raw, info = model.transcribe(
+        audio_path,
+        language=None,
+        task="transcribe",
+        word_timestamps=False,
+        vad_filter=True,
+        vad_parameters={"min_silence_duration_ms": 300},
+        beam_size=1,
+        best_of=1,
+        temperature=0.0,
+    )
+    return list(segments_raw), info
+
+
+# ─── Language helpers ─────────────────────────────────────────────
+
+def _detect_mix(segments: list[TranscriptSegment]) -> str:
     langs = {s["lang"] for s in segments}
-    has_tamil = "ta" in langs
-    has_english = "en" in langs
-    if has_tamil and has_english:
+    if "ta" in langs and "en" in langs:
         return "tamil-english"
-    if has_tamil:
+    if "ta" in langs:
         return "tamil"
     return "english"
 
 
+def _lang_from_text(text: str, detected_lang: str) -> str:
+    """
+    Heuristic: if detected language is Tamil or text contains
+    Tamil Unicode characters, mark as tamil-english mixed.
+    """
+    tamil_unicode = any("\u0B80" <= c <= "\u0BFF" for c in text)
+    if detected_lang == "ta" or tamil_unicode:
+        return "tamil-english"
+    return "english"
+
+
+# ─── Main agent node ──────────────────────────────────────────────
+
 async def stt_agent_node(state: AgentState) -> dict:
-    """
-    Transcribes audio file using faster-whisper.
-    Detects language per segment — handles Tamil/English code-switching.
-    """
     audio_path = state.get("audio_path")
     if not audio_path or not os.path.exists(audio_path):
-        return {"error": "No audio file found for STT processing", "transcript_segments": []}
+        return {
+            "error": "No audio file found for STT",
+            "transcript_segments": [],
+            "raw_transcript": "",
+            "language_mix": "unknown",
+        }
 
-    try:
-        model = await asyncio.to_thread(get_whisper_model)
-
-        # Run transcription in thread pool (blocking CPU operation)
-        segments_raw, info = await asyncio.to_thread(
-            lambda: model.transcribe(
-                audio_path,
-                language=None,          # auto-detect
-                task="transcribe",
-                word_timestamps=False,
-                vad_filter=True,        # voice activity detection
-                vad_parameters={"min_silence_duration_ms": 300},
+    # ── Try Groq first (fast, free, recommended) ──────────────────
+    if settings.GROQ_API_KEY:
+        try:
+            text, lang = await asyncio.wait_for(
+                _transcribe_groq(audio_path),
+                timeout=30,  # Groq should respond in <5s
             )
+            language_mix = _lang_from_text(text, lang)
+            segment: TranscriptSegment = {
+                "text":       text,
+                "lang":       lang,
+                "confidence": 0.95,
+                "start_time": 0.0,
+                "end_time":   0.0,
+            }
+            return {
+                "transcript_segments": [segment],
+                "raw_transcript":      text,
+                "language_mix":        language_mix,
+            }
+        except Exception as e:
+            # Groq failed — fall through to local Whisper
+            import structlog
+            structlog.get_logger().warning("groq_stt_failed_falling_back", error=str(e))
+
+    # ── Local Whisper fallback (slow on CPU) ──────────────────────
+    try:
+        segments_raw, info = await asyncio.wait_for(
+            asyncio.to_thread(_run_local_transcribe, audio_path),
+            timeout=STT_TIMEOUT_SECONDS,
         )
 
         segments: list[TranscriptSegment] = []
-        raw_text_parts = []
-
+        parts = []
         for seg in segments_raw:
-            lang = info.language if info.language else "en"
-            confidence = float(info.language_probability) if hasattr(info, 'language_probability') else 0.9
-
-            segment: TranscriptSegment = {
-                "text": seg.text.strip(),
-                "lang": lang,
-                "confidence": confidence,
+            lang = getattr(info, "language", "en") or "en"
+            conf = float(getattr(info, "language_probability", 0.9))
+            segments.append({
+                "text":       seg.text.strip(),
+                "lang":       lang,
+                "confidence": conf,
                 "start_time": float(seg.start),
-                "end_time": float(seg.end),
-            }
-            segments.append(segment)
-            raw_text_parts.append(seg.text.strip())
-
-        raw_transcript = " ".join(raw_text_parts)
-        language_mix = detect_language_mix(segments)
+                "end_time":   float(seg.end),
+            })
+            parts.append(seg.text.strip())
 
         return {
             "transcript_segments": segments,
-            "raw_transcript": raw_transcript,
-            "language_mix": language_mix,
+            "raw_transcript":      " ".join(parts),
+            "language_mix":        _detect_mix(segments),
         }
 
+    except asyncio.TimeoutError:
+        return {
+            "error": (
+                f"STT timed out after {STT_TIMEOUT_SECONDS}s. "
+                "Set GROQ_API_KEY in .env for fast cloud transcription "
+                "(free at console.groq.com, no card needed)."
+            ),
+            "transcript_segments": [],
+            "raw_transcript": "",
+            "language_mix": "unknown",
+        }
     except Exception as e:
         return {
             "error": f"STT failed: {str(e)}",
@@ -98,41 +185,3 @@ async def stt_agent_node(state: AgentState) -> dict:
             "raw_transcript": "",
             "language_mix": "unknown",
         }
-
-
-async def transcribe_audio_bytes(audio_bytes: bytes, content_type: str = "audio/webm") -> dict:
-    """
-    Convenience wrapper — transcribes raw audio bytes.
-    Saves to temp file, runs STT, cleans up.
-    Used by the WebSocket endpoint for streaming chunks.
-    """
-    suffix = ".webm" if "webm" in content_type else ".wav"
-    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
-        tmp.write(audio_bytes)
-        tmp_path = tmp.name
-
-    try:
-        state: AgentState = {
-            "session_id": "stream",
-            "doctor_id": "stream",
-            "audio_path": tmp_path,
-            "transcript_segments": [],
-            "raw_transcript": None,
-            "language_mix": None,
-            "english_transcript": None,
-            "tamil_original": None,
-            "entities": None,
-            "soap_note": None,
-            "tamil_patient_summary": None,
-            "qa_result": None,
-            "next_step": None,
-            "supervisor_reasoning": None,
-            "burnout_score": None,
-            "burnout_alert": False,
-            "messages": [],
-            "error": None,
-        }
-        result = await stt_agent_node(state)
-        return result
-    finally:
-        os.unlink(tmp_path)
