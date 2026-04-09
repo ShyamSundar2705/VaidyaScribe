@@ -75,8 +75,10 @@ app.add_middleware(
 )
 
 from app.api.router import api_router
+from app.api.auth_router import auth_router
 from app.api.websocket import ws_router
 
+app.include_router(auth_router, prefix="/api/v1")
 app.include_router(api_router, prefix="/api/v1")
 app.include_router(ws_router)
 

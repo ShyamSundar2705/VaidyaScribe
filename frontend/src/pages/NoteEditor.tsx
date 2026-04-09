@@ -123,22 +123,35 @@ export function NoteEditor() {
             QA confidence: {qa ? (qa.confidence * 100).toFixed(0) + "%" : "—"}
           </div>
         </div>
-        <button
-          onClick={handleApprove}
-          disabled={approving}
-          style={{
-            background: qa?.needs_review ? "#f59e0b" : "#1D9E75",
-            color: "#fff",
-            border: "none",
-            borderRadius: 10,
-            padding: "12px 28px",
-            fontSize: 14,
-            fontWeight: 500,
-            cursor: approving ? "not-allowed" : "pointer",
-          }}
-        >
-          {approving ? "Saving..." : qa?.needs_review ? "Approve with flags ↗" : "Approve ↗"}
-        </button>
+        <div style={{ display: "flex", gap: 10 }}>
+          {lastResult?.doctor_approved || soap.assessment ? (
+            <button
+              onClick={() => navigate("/prescription", { state: {
+                patientId:  lastResult?.session_id,
+                assessment: soap.assessment,
+                plan:       soap.plan,
+                language:   lastResult?.language_mix,
+              }})}
+              style={{ background: "#fff", color: "#0f172a",
+                border: "1px solid #e2e8f0", borderRadius: 10,
+                padding: "12px 18px", fontSize: 13, cursor: "pointer" }}
+            >
+              ℞ Prescription
+            </button>
+          ) : null}
+          <button
+            onClick={handleApprove}
+            disabled={approving}
+            style={{
+              background: qa?.needs_review ? "#f59e0b" : "#1D9E75",
+              color: "#fff", border: "none", borderRadius: 10,
+              padding: "12px 28px", fontSize: 14, fontWeight: 500,
+              cursor: approving ? "not-allowed" : "pointer",
+            }}
+          >
+            {approving ? "Saving..." : qa?.needs_review ? "Approve with flags ↗" : "Approve ↗"}
+          </button>
+        </div>
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 340px", gap: 24 }}>

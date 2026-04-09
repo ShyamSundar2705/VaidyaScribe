@@ -25,9 +25,22 @@ ws_router = APIRouter()
 
 @ws_router.websocket("/ws/consult")
 async def consultation_websocket(websocket: WebSocket):
+    # Authenticate via token query param: ws://host/ws/consult?token=<jwt>
+    token = websocket.query_params.get("token")
+    if not token:
+        await websocket.close(code=4001, reason="Missing token")
+        return
+
+    from app.core.auth import decode_token
+    try:
+        payload   = decode_token(token)
+        doctor_id = payload.get("sub", "unknown")
+    except Exception:
+        await websocket.close(code=4003, reason="Invalid token")
+        return
+
     await websocket.accept()
     session_id = None
-    doctor_id  = "DR-DEMO-001"
     audio_chunks: list[bytes] = []
 
     async def send_progress(step: str, message: str, data: dict | None = None):

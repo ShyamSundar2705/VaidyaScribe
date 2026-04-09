@@ -7,7 +7,7 @@ class Settings(BaseSettings):
 
     APP_NAME: str = "VaidyaScribe"
     DEBUG: bool = False
-    SECRET_KEY: str = "change-me-in-production"
+    SECRET_KEY: str = "vaidyascribe-jwt-secret-change-in-production-2026"
 
     # ── CORS: cover every origin the browser can send ─────────────
     # http://localhost   → nginx on :80 (no port in URL bar)

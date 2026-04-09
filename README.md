@@ -2,7 +2,8 @@
 ### Cognizant Technoverse Hackathon 2026 — Healthcare: Clinical Documentation
 
 > A privacy-first, multilingual AI clinical scribe for Tamil/English consultations.
-> Generates SOAP notes automatically, catches hallucinations, and monitors doctor burnout.
+> Generates SOAP notes automatically, catches hallucinations, monitors doctor burnout,
+> and includes secure JWT authentication so each doctor only sees their own patients.
 > **Total infrastructure cost: ₹0.**
 
 ---
@@ -18,33 +19,35 @@
 | Hallucination QA gate | **Yes — cross-check** | Partial |
 | Doctor burnout predictor | **Yes — unique** | No |
 | Patient Tamil summary | **Yes** | No |
+| Secure doctor login (JWT) | **Yes — per-doctor isolation** | Varies |
+| Prescription pad | **Yes — auto-parsed from SOAP** | No |
 
 ---
 
 ## Architecture
 
 ```
-Browser mic → WebSocket → FastAPI → LangGraph
-                                        │
-        ┌───────────────────────────────┤
-        ▼                               ▼
-   STT agent                    Translation agent
-  (Whisper)                       (NLLB-200)
-        │                               │
-        └──────────────┬────────────────┘
-                       ▼
-                  NER agent (scispaCy)
-                       │
-                       ▼
-             SOAP generator (Llama 3.1 via Ollama)
-                       │
-                       ▼
-                QA hallucination check
-                       │
-                       ▼
-                Supervisor → route → Doctor review UI
-                       │
-              Tamil summary + PDF + FHIR export
+Browser mic → WebSocket (JWT auth) → FastAPI → LangGraph
+                                                    │
+        ┌───────────────────────────────────────────┤
+        ▼                                           ▼
+   STT agent                              Translation agent
+  (Groq Whisper / faster-whisper)           (NLLB-200, skip if Groq)
+        │                                           │
+        └──────────────────┬────────────────────────┘
+                           ▼
+                      NER agent (scispaCy)
+                           │
+                           ▼
+               SOAP generator (Llama 3.1 via Ollama / Groq fallback)
+                           │
+                           ▼
+                    QA hallucination check
+                           │
+                           ▼
+                    Supervisor → Doctor review UI
+                           │
+              Tamil summary + PDF + FHIR export + Prescription pad
 ```
 
 ---
@@ -53,11 +56,13 @@ Browser mic → WebSocket → FastAPI → LangGraph
 
 | Component | Tool | Cost |
 |-----------|------|------|
-| STT | faster-whisper (local) | Free |
-| Translation | NLLB-200 distilled 600M (HuggingFace) | Free / Apache 2.0 |
+| Auth | python-jose (JWT) + passlib (bcrypt) | Free |
+| STT | Groq whisper-large-v3 (primary) | Free (7200s/day) |
+| STT fallback | faster-whisper local | Free |
+| Translation | NLLB-200 distilled 600M | Free / Apache 2.0 |
 | LLM | Ollama + Llama 3.1 8B | Free |
 | LLM fallback | Groq free tier | Free (no card) |
-| Agent framework | LangGraph 0.2 | Free / Apache 2.0 |
+| Agent framework | LangGraph 0.3 | Free / Apache 2.0 |
 | NER | scispaCy en_core_sci_md | Free |
 | Backend | FastAPI + Python 3.12 | Free |
 | Database | SQLite + LanceDB | Free / serverless |
@@ -74,118 +79,155 @@ Browser mic → WebSocket → FastAPI → LangGraph
 # 1. Clone and configure
 git clone <repo>
 cd vaidyascribe
-cp .env.example .env          # no API keys needed for full local mode
+cp .env.example .env
 
-# 2. Start all services (pulls Llama 3.1 8B on first run — ~4.7GB)
+# 2. Add Groq key for fast transcription (free at console.groq.com, no card)
+echo "GROQ_API_KEY=gsk_..." >> .env
+
+# 3. Start all services
 docker compose up --build
 
-# 3. Seed demo data
+# 4. Seed demo data
 docker compose exec backend python scripts/seed_demo.py
 
-# 4. Access
-#   Dashboard:  http://localhost
-#   API docs:   http://localhost:8000/docs
+# 5. Open browser
+#   App:       http://localhost        (register/login first)
+#   API docs:  http://localhost:8000/docs
 
-# 5. Run tests
+# 6. Run tests
 docker compose exec backend pytest tests/ -v
-```
-
-### Groq fallback (faster on demo day)
-```bash
-# Get free key (no card): https://console.groq.com
-echo "GROQ_API_KEY=gsk_..." >> .env
-echo "USE_GROQ_FALLBACK=true" >> .env
-docker compose restart backend
 ```
 
 ---
 
 ## Project structure
 
-43 files total. Every file listed below exists in the repository.
+51 files total. Every file listed below exists in the repository.
 
 ```
-vaidyascribe/                           # root
-├── docker-compose.yml                  # all 5 services: ollama, redis, backend, frontend, nginx
-├── .env.example                        # zero secrets — all free tools, copy to .env
+vaidyascribe/                               # root
+├── docker-compose.yml                      # 5 services: ollama, redis, backend, frontend, nginx
+├── .env.example                            # zero secrets — all free tools, copy to .env
 ├── README.md
 │
 ├── backend/
-│   ├── Dockerfile                      # python 3.12-slim + ffmpeg + scispaCy model download
-│   ├── requirements.txt                # all free: faster-whisper, NLLB, LangGraph, spaCy…
-│   ├── pytest.ini                      # asyncio_mode = auto
+│   ├── Dockerfile                          # python 3.12-slim + ffmpeg + scispaCy model download
+│   ├── requirements.txt                    # pinned, conflict-free: all free libraries
+│   ├── pytest.ini                          # asyncio_mode = auto
 │   │
 │   ├── alembic/
 │   │   └── versions/
-│   │       └── 001_initial.py          # creates all 4 tables (SQLite migration)
+│   │       └── 001_initial.py              # creates all 5 tables (SQLite migration)
 │   │
 │   ├── app/
-│   │   ├── main.py                     # FastAPI app entry, CORS, lifespan, router mount
+│   │   ├── main.py                         # FastAPI entry, CORS, lifespan, router mount
 │   │   │
 │   │   ├── agents/
-│   │   │   ├── state.py                # AgentState TypedDict — shared across all agents
-│   │   │   ├── graph.py                # LangGraph state machine: 5 nodes + conditional edges
-│   │   │   ├── stt_agent.py            # faster-whisper, language=None auto-detect, VAD filter
-│   │   │   ├── translation_agent.py    # NLLB-200 Tamil→English + English→Tamil for summary
-│   │   │   ├── ner_agent.py            # scispaCy NER, vital regex, ICD-10 offline CSV lookup
-│   │   │   ├── soap_generator.py       # Llama 3.1 via Ollama (Groq free tier fallback)
-│   │   │   ├── qa_agent.py             # hallucination cross-check, 60% token support threshold
-│   │   │   └── supervisor.py           # routing decision + burnout score contribution
+│   │   │   ├── state.py                    # AgentState TypedDict — shared across all agents
+│   │   │   ├── graph.py                    # LangGraph state machine: 5 nodes + conditional edges
+│   │   │   ├── stt_agent.py                # Groq Whisper primary, faster-whisper fallback
+│   │   │   ├── translation_agent.py        # NLLB-200 Tamil→English (skipped if Groq used)
+│   │   │   ├── ner_agent.py                # scispaCy NER, vital regex, ICD-10 CSV lookup
+│   │   │   ├── soap_generator.py           # Llama 3.1 via Ollama (Groq fallback)
+│   │   │   ├── qa_agent.py                 # hallucination cross-check, clinical token matching
+│   │   │   └── supervisor.py               # routing decision + burnout score contribution
 │   │   │
 │   │   ├── api/
-│   │   │   ├── router.py               # REST: /consent, /notes, /approve, /export/pdf, /burnout
-│   │   │   └── websocket.py            # WS /ws/consult — binary audio chunks + progress events
+│   │   │   ├── auth_router.py              # POST /auth/register, /login, GET /auth/me
+│   │   │   ├── router.py                   # all routes JWT-protected, doctor-scoped queries
+│   │   │   └── websocket.py                # WS /ws/consult — JWT via ?token=, audio streaming
 │   │   │
 │   │   ├── core/
-│   │   │   ├── config.py               # pydantic-settings: Ollama, Groq, Whisper, thresholds
-│   │   │   └── database.py             # async SQLite engine + AsyncSessionLocal + create_tables
+│   │   │   ├── auth.py                     # JWT sign/verify, bcrypt hashing, get_current_doctor
+│   │   │   ├── config.py                   # pydantic-settings: all env vars with defaults
+│   │   │   └── database.py                 # async SQLite engine, AsyncSessionLocal, create_tables
 │   │   │
 │   │   ├── models/
-│   │   │   └── db_models.py            # 4 ORM models: ConsultationSession, ClinicalNote,
-│   │   │                               #   AuditLog, DoctorMetrics
+│   │   │   └── db_models.py                # 5 ORM models: Doctor, ConsultationSession,
+│   │   │                                   #   ClinicalNote, AuditLog, DoctorMetrics
 │   │   │
 │   │   └── services/
-│   │       ├── note_service.py         # save_consultation_result — persists pipeline state to DB
-│   │       ├── burnout_service.py      # weekly metrics update + composite burnout score formula
-│   │       ├── fhir_service.py         # FHIR R4 DocumentReference + Condition bundle builder
-│   │       └── pdf_service.py          # WeasyPrint HTML→PDF with Tamil Unicode (Noto Sans Tamil)
+│   │       ├── note_service.py             # save_consultation_result — persists pipeline to DB
+│   │       ├── burnout_service.py          # weekly metrics + composite burnout score formula
+│   │       ├── fhir_service.py             # FHIR R4 DocumentReference + Condition bundle
+│   │       └── pdf_service.py              # WeasyPrint HTML→PDF, Tamil Unicode support
 │   │
 │   └── tests/
-│       └── test_all.py                 # 20 tests: NER, QA, SOAP parser, lang detect, routing, API
+│       └── test_all.py                     # NER, QA, SOAP parser, lang detect, routing, API
 │
 ├── frontend/
-│   ├── Dockerfile                      # node 20 multi-stage: build → serve
-│   ├── index.html                      # HTML entry point, mounts <div id="root">
-│   ├── vite.config.ts                  # Vite 6, /api and /ws proxied to backend:8000
-│   ├── package.json                    # React 19, Zustand 5, TanStack Query 5, framer-motion
+│   ├── Dockerfile                          # node 20 multi-stage: build → serve
+│   ├── index.html                          # HTML entry, mounts <div id="root">
+│   ├── vite.config.ts                      # Vite 6, /api and /ws proxied to backend:8000
+│   ├── package.json                        # React 19, Zustand 5, TanStack Query 5, framer-motion
 │   │
 │   └── src/
-│       ├── main.tsx                    # React 19 createRoot entry
-│       ├── App.tsx                     # BrowserRouter + routes + QueryClientProvider + Toaster
-│       ├── index.css                   # global reset, box-sizing, focus ring
+│       ├── main.tsx                        # React 19 createRoot entry
+│       ├── App.tsx                         # Routes: public /login + protected everything else
+│       ├── api.ts                          # axios client, auto-injects JWT, redirects on 401
+│       ├── index.css                       # global reset, box-sizing, focus ring
 │       │
 │       ├── components/
-│       │   ├── Layout.tsx              # sidebar nav: Consultation | Wellness, doctor ID footer
-│       │   └── ConsentBanner.tsx       # DPDP consent toggle, patient ID input, logs to API
+│       │   ├── Layout.tsx                  # sidebar: Dashboard|Consultation|Patients|Wellness
+│       │   ├── ConsentBanner.tsx           # DPDP consent toggle, patient ID input
+│       │   └── ProtectedRoute.tsx          # redirects unauthenticated users to /login
 │       │
 │       ├── hooks/
-│       │   └── useAudioCapture.ts      # MediaRecorder → binary WS chunks, pipeline state machine
+│       │   └── useAudioCapture.ts          # MediaRecorder → WS chunks, JWT token in WS URL
 │       │
 │       ├── pages/
-│       │   ├── ConsultationRoom.tsx    # recording button, animated pipeline steps, live transcript
-│       │   ├── NoteEditor.tsx          # editable SOAP sections, QA flags highlighted, approve btn
-│       │   └── BurnoutDashboard.tsx    # weekly bar chart, burnout score cards, alert banner
+│       │   ├── LoginPage.tsx               # Sign in / Register tabs, two-panel layout
+│       │   ├── Dashboard.tsx               # Home: greeting, stats, burnout bar, recent notes
+│       │   ├── ConsultationRoom.tsx        # recording, animated pipeline steps, live transcript
+│       │   ├── NoteEditor.tsx              # editable SOAP, QA flags, approve + prescription btn
+│       │   ├── PatientHistory.tsx          # dual-mode: lookup by ID or keyword search
+│       │   ├── PrescriptionPad.tsx         # auto-parsed medications, editable table, print
+│       │   └── BurnoutDashboard.tsx        # weekly bar chart, score cards, alert banner
 │       │
 │       └── store/
-│           └── app.store.ts            # Zustand: doctorId, sessionId, consent, lastResult, history
+│           ├── app.store.ts                # Zustand: sessionId, lastResult, history
+│           └── auth.store.ts               # Zustand (persisted): token, doctorId, fullName
 │
 ├── scripts/
-│   └── seed_demo.py                    # 5 synthetic consultations (2 Tamil-EN, 1 Tamil, 2 EN)
-│                                       # + 4 weeks burnout metrics for DR-DEMO-001
+│   └── seed_demo.py                        # 5 synthetic Tamil/English consultations
+│                                           # + 4 weeks burnout metrics
 │
 └── nginx/
-    └── nginx.conf                      # reverse proxy: /api → backend, /ws → backend (WS upgrade),
-                                        #   / → frontend
+    └── nginx.conf                          # /api → backend, /ws → backend (WS upgrade),
+                                            # / → frontend
+```
+
+---
+
+## Authentication
+
+All routes require a JWT Bearer token. Doctors register once, then log in with email + password.
+Each doctor can only view and search their own patients' notes — cross-doctor data access is blocked at the query level.
+
+```
+POST /api/v1/auth/register   — create account (doctor_id, email, password, specialisation)
+POST /api/v1/auth/login      — returns JWT (valid 8 hours — one clinic day)
+GET  /api/v1/auth/me         — current doctor profile
+POST /api/v1/auth/change-password
+```
+
+---
+
+## API endpoints (all protected)
+
+```
+POST /api/v1/sessions/consent
+GET  /api/v1/notes/search                  ← word-AND search, before parameterised routes
+GET  /api/v1/notes/{session_id}
+POST /api/v1/notes/{note_id}/approve
+GET  /api/v1/notes/{note_id}/export/pdf
+GET  /api/v1/notes/{note_id}/export/fhir
+GET  /api/v1/doctors/me/burnout
+GET  /api/v1/doctors/me/notes/recent
+GET  /api/v1/patients/{patient_id}/notes
+GET  /api/v1/patients/search
+WS   /ws/consult?token=<jwt>
+GET  /health
 ```
 
 ---
@@ -194,10 +236,10 @@ vaidyascribe/                           # root
 
 **Business value:** ₹0 cost vs ₹12,000–50,000/month competitors. 72% documentation time reduction. 2 hours saved per doctor per day. Scalable to 1M+ Tamil-speaking clinicians across Tamil Nadu, Telangana, and Sri Lanka.
 
-**Uniqueness:** Tamil-English code-switch handling is not available in any commercial scribe. DPDP 2023 consent flow built specifically for India. Doctor burnout predictor has no equivalent anywhere.
+**Uniqueness:** Tamil-English code-switch handling is not available in any commercial scribe. DPDP 2023 consent flow built for India. Doctor burnout predictor has no equivalent. Per-doctor patient isolation meets clinical data governance standards.
 
-**Implementability:** Fully working 24-hour MVP. Docker compose up brings up the entire stack. Live demo: speak Tamil-English → SOAP note appears in 30 seconds.
+**Implementability:** Fully working MVP. `docker compose up --build` brings up the entire stack. Live demo: register → record Tamil-English → SOAP note in 30 seconds → approve → print prescription.
 
-**Scalability:** Stateless microservice architecture, AWS ECS-deployable containers, SQLite → PostgreSQL swap for production, LanceDB for vector similarity search at scale.
+**Scalability:** Stateless microservice architecture, AWS ECS-deployable, SQLite → PostgreSQL swap for production, LanceDB for vector similarity at scale.
 
 **Market:** India AI healthcare CAGR 40.6%. Global clinical documentation market ₹42,800 crore (2026). Direct addressable: 1.3M registered doctors in India, 0% served by affordable Tamil-language scribes.

@@ -1,25 +1,33 @@
 /**
- * API client.
- *
- * Always uses relative URLs (/api/v1/...) so the browser sends
- * requests to whatever host served the page — nginx on localhost:80.
- * Nginx then proxies /api/ → backend:8000 internally.
- *
- * Never use an absolute URL like http://localhost:8000 — that bypasses
- * nginx and hits the backend directly, causing CORS and empty-response
- * errors when the backend crashes or restarts.
+ * API client — relative URLs through nginx.
+ * Automatically injects JWT token from auth store on every request.
  */
 import axios from "axios";
+import { useAuthStore } from "./store/auth.store";
 
 export const api = axios.create({
-  baseURL: "/api/v1",
-  headers: { "Content-Type": "application/json" },
+  baseURL:         "/api/v1",
+  headers:         { "Content-Type": "application/json" },
   withCredentials: false,
 });
 
+// Inject token on every request
+api.interceptors.request.use((config) => {
+  const token = useAuthStore.getState().token;
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
+});
+
+// Handle 401 — clear auth and redirect to login
 api.interceptors.response.use(
   (res) => res,
   (err) => {
+    if (err.response?.status === 401) {
+      useAuthStore.getState().clearAuth();
+      window.location.href = "/login";
+    }
     const msg = err.response?.data?.detail || err.message;
     console.error("[API Error]", msg, err.config?.url);
     return Promise.reject(err);
