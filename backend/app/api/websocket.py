@@ -60,6 +60,19 @@ async def consultation_websocket(websocket: WebSocket):
                         }))
                         continue
 
+                    # Check minimum audio size — too small = mic not captured
+                    total_bytes = sum(len(c) for c in audio_chunks)
+                    if total_bytes < 5000:  # < ~5KB means barely any audio
+                        await websocket.send_text(json.dumps({
+                            "type":    "error",
+                            "message": (
+                                "Recording too short or microphone not capturing audio. "
+                                "Please speak clearly for at least 5 seconds and try again."
+                            ),
+                        }))
+                        audio_chunks = []
+                        continue
+
                     # Write accumulated audio chunks to temp file
                     with tempfile.NamedTemporaryFile(suffix=".webm", delete=False) as tmp:
                         for chunk in audio_chunks:

@@ -36,6 +36,9 @@ async def save_consultation_result(state: AgentState) -> str | None:
                 "review" if qa.get("needs_review", True) else "draft"
             )
 
+        # Fetch patient_id from session if available
+        patient_id = session.patient_id if session else None
+
         # Create clinical note
         import uuid
         note_id = str(uuid.uuid4())
@@ -43,6 +46,7 @@ async def save_consultation_result(state: AgentState) -> str | None:
             id=note_id,
             session_id=session_id,
             doctor_id=state.get("doctor_id", "unknown"),
+            patient_id=patient_id,
             transcript_english=state.get("english_transcript", ""),
             transcript_original=state.get("raw_transcript", ""),
             entities=entities,
@@ -63,7 +67,7 @@ async def save_consultation_result(state: AgentState) -> str | None:
             session_id=session_id,
             doctor_id=state.get("doctor_id", "unknown"),
             action="NOTE_GENERATED",
-            metadata={
+            meta_data={
                 "note_id": note_id,
                 "qa_confidence": qa.get("confidence", 0.0),
                 "needs_review": qa.get("needs_review", True),

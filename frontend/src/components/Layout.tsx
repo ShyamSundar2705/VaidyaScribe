@@ -4,6 +4,7 @@ import { useAppStore } from "../store/app.store";
 
 const navItems = [
   { label: "Consultation", to: "/" },
+  { label: "Patient history", to: "/patients" },
   { label: "Wellness", to: "/wellness" },
 ];
 
@@ -11,15 +12,12 @@ export function Layout({ children }: { children: ReactNode }) {
   const { doctorId } = useAppStore();
 
   return (
-    <div style={{ display: "flex", minHeight: "100vh", fontFamily: "system-ui, -apple-system, sans-serif" }}>
+    <div style={{ display: "flex", minHeight: "100vh",
+      fontFamily: "system-ui, -apple-system, sans-serif" }}>
       <aside style={{
-        width: 220,
-        background: "#0f172a",
-        color: "#e2e8f0",
-        display: "flex",
-        flexDirection: "column",
-        padding: "24px 0",
-        flexShrink: 0,
+        width: 220, background: "#0f172a", color: "#e2e8f0",
+        display: "flex", flexDirection: "column",
+        padding: "24px 0", flexShrink: 0,
       }}>
         <div style={{ padding: "0 20px 24px", borderBottom: "1px solid #1e293b" }}>
           <div style={{ fontSize: 10, letterSpacing: "0.12em", color: "#64748b", marginBottom: 6 }}>
@@ -34,7 +32,7 @@ export function Layout({ children }: { children: ReactNode }) {
         </div>
 
         <nav style={{ padding: "16px 12px", flex: 1 }}>
-          {navItems.map((item) => (
+          {navItems.map(item => (
             <NavLink
               key={item.to}
               to={item.to}

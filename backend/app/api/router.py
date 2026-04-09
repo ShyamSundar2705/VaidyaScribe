@@ -51,7 +51,7 @@ async def record_consent(req: ConsentRequest, db: AsyncSession = Depends(get_db)
         session_id=session_id,
         doctor_id=req.doctor_id,
         action="CONSENT_GIVEN" if req.consent_given else "CONSENT_DECLINED",
-        metadata={"patient_id": req.patient_id, "timestamp": datetime.utcnow().isoformat()},
+        meta_data={"patient_id": req.patient_id, "timestamp": datetime.utcnow().isoformat()},
     ))
     await db.commit()
     return {"session_id": session_id, "consent_given": req.consent_given}
@@ -158,7 +158,7 @@ async def approve_note(note_id: str, req: ApproveRequest, db: AsyncSession = Dep
         session_id=note.session_id,
         doctor_id=req.doctor_id,
         action="NOTE_EDITED_AND_APPROVED" if req.edited else "NOTE_APPROVED",
-        metadata={"note_id": note.id, "edited": req.edited},
+        meta_data={"note_id": note.id, "edited": req.edited},
     ))
     await db.commit()
     return {"approved": True, "note_id": note.id, "session_id": note.session_id}
@@ -239,3 +239,68 @@ async def get_recent_notes(doctor_id: str, limit: int = 10, db: AsyncSession = D
         }
         for n in notes
     ]
+
+
+# ─── Patient history ──────────────────────────────────────────────
+
+@api_router.get("/patients/{patient_id}/notes")
+async def get_patient_notes(
+    patient_id: str,
+    approved_only: bool = True,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Fetch notes for a patient by patient_id.
+    approved_only=true (default) — only show doctor-approved notes.
+    approved_only=false — show all including pending (for demo/debug).
+    """
+    query = (
+        select(ClinicalNote, ConsultationSession)
+        .join(ConsultationSession, ConsultationSession.id == ClinicalNote.session_id)
+        .where(ClinicalNote.patient_id == patient_id)
+    )
+    if approved_only:
+        query = query.where(ClinicalNote.doctor_approved == True)
+    result = await db.execute(query.order_by(ClinicalNote.created_at.desc()))
+    rows = result.fetchall()
+
+    if not rows:
+        return {"patient_id": patient_id, "notes": [], "total": 0}
+
+    notes = []
+    for note, session in rows:
+        notes.append({
+            "note_id":          note.id,
+            "session_id":       note.session_id,
+            "date":             note.created_at.isoformat(),
+            "doctor_id":        note.doctor_id,
+            "language":         session.language_detected or "english",
+            "doctor_approved":  note.doctor_approved,
+            "qa_confidence":    note.qa_confidence,
+            "icd10_codes":      note.icd10_codes or [],
+            "soap": {
+                "subjective": note.soap_subjective,
+                "objective":  note.soap_objective,
+                "assessment": note.soap_assessment,
+                "plan":       note.soap_plan,
+            },
+            "tamil_patient_summary": note.tamil_patient_summary,
+        })
+
+    return {"patient_id": patient_id, "notes": notes, "total": len(notes)}
+
+
+@api_router.get("/patients/search")
+async def search_patients(q: str, db: AsyncSession = Depends(get_db)):
+    """
+    Search for patients by patient_id prefix.
+    Returns list of unique patient_ids that have notes.
+    """
+    from sqlalchemy import distinct
+    result = await db.execute(
+        select(distinct(ClinicalNote.patient_id))
+        .where(ClinicalNote.patient_id.ilike(f"{q}%"))
+        .limit(10)
+    )
+    patient_ids = [row[0] for row in result.fetchall() if row[0]]
+    return {"results": patient_ids}

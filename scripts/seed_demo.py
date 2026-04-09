@@ -223,13 +223,13 @@ async def seed():
                 session_id=session_id,
                 doctor_id=demo["doctor_id"],
                 action="CONSENT_GIVEN",
-                metadata={"patient_id": demo["patient_id"]},
+                meta_data={"patient_id": demo["patient_id"]},
             ))
             db.add(AuditLog(
                 session_id=session_id,
                 doctor_id=demo["doctor_id"],
                 action="NOTE_APPROVED",
-                metadata={"note_id": note.id, "edited": bool(demo["qa_flags"])},
+                meta_data={"note_id": note.id, "edited": bool(demo["qa_flags"])},
             ))
 
         # Seed burnout metrics for DR-DEMO-001

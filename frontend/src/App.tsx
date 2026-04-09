@@ -5,6 +5,7 @@ import { Layout } from "./components/Layout";
 import { ConsultationRoom } from "./pages/ConsultationRoom";
 import { NoteEditor } from "./pages/NoteEditor";
 import { BurnoutDashboard } from "./pages/BurnoutDashboard";
+import { PatientHistory } from "./pages/PatientHistory";
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { staleTime: 30_000, retry: 1 } },
@@ -16,9 +17,10 @@ export default function App() {
       <BrowserRouter>
         <Layout>
           <Routes>
-            <Route path="/" element={<ConsultationRoom />} />
-            <Route path="/review/:sessionId" element={<NoteEditor />} />
-            <Route path="/wellness" element={<BurnoutDashboard />} />
+            <Route path="/"                   element={<ConsultationRoom />} />
+            <Route path="/review/:sessionId"  element={<NoteEditor />} />
+            <Route path="/patients"           element={<PatientHistory />} />
+            <Route path="/wellness"           element={<BurnoutDashboard />} />
           </Routes>
         </Layout>
       </BrowserRouter>
