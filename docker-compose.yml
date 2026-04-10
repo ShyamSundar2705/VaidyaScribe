@@ -1,63 +1,36 @@
+version: "3.9"
+
 services:
-  # ─── Ollama — local LLM inference ─────────────────────────────
-  ollama:
-    image: ollama/ollama:latest
-    volumes:
-      - ollama_models:/root/.ollama
-    ports:
-      - "11434:11434"
-    restart: unless-stopped
-    # NO healthcheck — Ollama is slow to start and healthcheck failures
-    # cause downstream depends_on to abort. Backend handles unavailability
-    # gracefully via the MemorySaver fallback.
-
-  # Pull model after Ollama starts — fire and forget
-  ollama-pull:
-    image: ollama/ollama:latest
-    volumes:
-      - ollama_models:/root/.ollama
-    depends_on:
-      - ollama
-    entrypoint: >
-      sh -c "sleep 15 && ollama pull llama3.2:3b || echo 'Pull failed, retry: docker compose exec ollama ollama pull llama3.2:3b'"
-    restart: "no"
-
-  # ─── Redis ────────────────────────────────────────────────────
+  # ─── Redis ────────────────────────────────────────────────────────
   redis:
     image: redis:7-alpine
     command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
     volumes:
       - redis_data:/data
-    ports:
-      - "6379:6379"
     restart: unless-stopped
-    # NO healthcheck — same reason as Ollama
 
-  # ─── Backend — FastAPI + LangGraph ────────────────────────────
+  # ─── Backend ──────────────────────────────────────────────────────
   backend:
     build:
-      context: ./backend
-      dockerfile: Dockerfile
-    env_file:
-      - .env
+      context: .
+      dockerfile: backend/Dockerfile
+    env_file: .env
     environment:
-      OLLAMA_BASE_URL: http://ollama:11434
       REDIS_URL: redis://redis:6379/0
       DATABASE_URL: sqlite+aiosqlite:///./data/vaidyascribe.db
       LANCEDB_URI: ./data/lancedb
-      PYTHONPATH: /app
     volumes:
-      - ./backend:/app
       - app_data:/app/data
     ports:
       - "8000:8000"
     depends_on:
       - redis
-      - ollama
     restart: unless-stopped
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
 
-  # ─── Frontend ─────────────────────────────────────────────────
+  # ─── Frontend ─────────────────────────────────────────────────────
+  # VITE_ env vars are baked at BUILD time — do NOT set them here.
+  # The app uses relative URLs (/api/v1) so nginx proxies correctly.
   frontend:
     build:
       context: ./frontend
@@ -68,7 +41,7 @@ services:
       - backend
     restart: unless-stopped
 
-  # ─── Nginx — reverse proxy ─────────────────────────────────────
+  # ─── Nginx ────────────────────────────────────────────────────────
   nginx:
     image: nginx:alpine
     volumes:
@@ -81,6 +54,5 @@ services:
     restart: unless-stopped
 
 volumes:
-  ollama_models:
   redis_data:
   app_data:

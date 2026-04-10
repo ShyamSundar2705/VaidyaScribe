@@ -23,7 +23,8 @@ def get_llm():
     if _llm is not None:
         return _llm
 
-    if settings.USE_GROQ_FALLBACK and settings.GROQ_API_KEY:
+    # Use Groq if key is set AND (fallback flag is set OR Ollama not configured)
+    if settings.GROQ_API_KEY and (settings.USE_GROQ_FALLBACK or not settings.OLLAMA_BASE_URL):
         from langchain_groq import ChatGroq
         _llm = ChatGroq(
             model=settings.GROQ_MODEL,
@@ -31,7 +32,13 @@ def get_llm():
             temperature=0.1,
             max_tokens=2048,
         )
-    else:
+        return _llm
+
+    # Try Ollama — if it fails and Groq key exists, fall back automatically
+    try:
+        import httpx
+        r = httpx.get(f"{settings.OLLAMA_BASE_URL}/api/tags", timeout=3)
+        r.raise_for_status()
         from langchain_ollama import ChatOllama
         _llm = ChatOllama(
             model=settings.OLLAMA_MODEL,
@@ -39,6 +46,22 @@ def get_llm():
             temperature=0.1,
             format="json",
         )
+    except Exception:
+        if settings.GROQ_API_KEY:
+            import structlog
+            structlog.get_logger().warning("ollama_unreachable_using_groq")
+            from langchain_groq import ChatGroq
+            _llm = ChatGroq(
+                model=settings.GROQ_MODEL,
+                api_key=settings.GROQ_API_KEY,
+                temperature=0.1,
+                max_tokens=2048,
+            )
+        else:
+            raise RuntimeError(
+                "Ollama is not reachable and GROQ_API_KEY is not set. "
+                "Set GROQ_API_KEY in .env for SOAP generation."
+            )
     return _llm
 
 
