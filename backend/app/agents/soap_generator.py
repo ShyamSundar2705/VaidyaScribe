@@ -1,63 +1,17 @@
 """
 SOAP Note Generator Agent.
 
-Primary: Ollama + Llama 3.1 8B (local, free, offline)
-Fallback: Groq free tier (LLaMA 3.1 70B, 6000 tokens/min, no card needed)
+Calls Groq LLM directly via httpx — no langchain_groq SDK needed.
+This avoids the proxies conflict with httpx versions on EC2.
 
-Uses structured JSON output to enforce SOAP format.
-Prompt is carefully engineered to minimise hallucinations.
+Fallback: Ollama if GROQ_API_KEY not set (local dev only).
 """
 from __future__ import annotations
 import json
 import re
 import asyncio
-from langchain_core.messages import HumanMessage, SystemMessage
 from app.agents.state import AgentState, SOAPNote, ExtractedEntities
 from app.core.config import settings
-
-_llm = None
-
-
-def get_llm():
-    # Disable Groq completely (EC2 safe)
-    import httpx
-
-    class DummyLLM:
-        def invoke(self, messages):
-            return type("obj", (object,), {
-                "content": '{"subjective":"Demo","objective":"Demo","assessment":"Demo","plan":"Demo","icd10_codes":[],"confidence":0.5}'
-            })
-
-    return DummyLLM()
-
-    # Try Ollama — if it fails and Groq key exists, fall back automatically
-    try:
-        import httpx
-        r = httpx.get(f"{settings.OLLAMA_BASE_URL}/api/tags", timeout=3)
-        r.raise_for_status()
-        from langchain_ollama import ChatOllama
-        _llm = ChatOllama(
-            model=settings.OLLAMA_MODEL,
-            base_url=settings.OLLAMA_BASE_URL,
-            temperature=0.1,
-            format="json",
-        )
-    except Exception:
-        if settings.GROQ_API_KEY:
-            import structlog
-            structlog.get_logger().warning("ollama_unreachable_using_groq")
-            _llm = ChatGroq(
-                model=settings.GROQ_MODEL,
-                api_key=settings.GROQ_API_KEY,
-                temperature=0.1,
-                max_tokens=2048,
-            )
-        else:
-            raise RuntimeError(
-                "Ollama is not reachable and GROQ_API_KEY is not set. "
-                "Set GROQ_API_KEY in .env for SOAP generation."
-            )
-    return _llm
 
 
 SOAP_SYSTEM_PROMPT = """You are a clinical documentation assistant generating structured SOAP notes.
@@ -104,60 +58,107 @@ Generate the SOAP note using ONLY the information above. Respond with JSON only.
 
 def parse_soap_response(response_text: str) -> SOAPNote:
     """Parse LLM response into SOAPNote structure."""
-    # Strip markdown fences if present
     clean = re.sub(r"```(?:json)?|```", "", response_text).strip()
-
     try:
         data = json.loads(clean)
         return {
             "subjective": data.get("subjective", "Not documented"),
-            "objective": data.get("objective", "Not documented"),
+            "objective":  data.get("objective",  "Not documented"),
             "assessment": data.get("assessment", "Not documented"),
-            "plan": data.get("plan", "Not documented"),
+            "plan":       data.get("plan",        "Not documented"),
             "icd10_codes": data.get("icd10_codes", []),
-            "confidence": float(data.get("confidence", 0.7)),
+            "confidence":  float(data.get("confidence", 0.7)),
         }
     except (json.JSONDecodeError, ValueError):
-        # Graceful degradation — return partial note with low confidence
         return {
-            "subjective": response_text[:500],
-            "objective": "Not documented",
-            "assessment": "Unable to parse — manual review required",
-            "plan": "Not documented",
+            "subjective":  response_text[:500],
+            "objective":   "Not documented",
+            "assessment":  "Unable to parse — manual review required",
+            "plan":        "Not documented",
             "icd10_codes": [],
-            "confidence": 0.3,
+            "confidence":  0.3,
         }
+
+
+async def _call_groq(prompt: str) -> str:
+    """
+    Call Groq chat completion directly via httpx.
+    Bypasses the groq SDK entirely — no proxies conflict.
+    """
+    import httpx
+    payload = {
+        "model": settings.GROQ_MODEL or "llama-3.1-70b-versatile",
+        "messages": [
+            {"role": "system", "content": SOAP_SYSTEM_PROMPT},
+            {"role": "user",   "content": prompt},
+        ],
+        "temperature": 0.1,
+        "max_tokens":  2048,
+    }
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        response = await client.post(
+            "https://api.groq.com/openai/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {settings.GROQ_API_KEY}",
+                "Content-Type":  "application/json",
+            },
+            json=payload,
+        )
+        response.raise_for_status()
+        return response.json()["choices"][0]["message"]["content"]
+
+
+async def _call_ollama(prompt: str) -> str:
+    """
+    Call Ollama local LLM via httpx.
+    Used as fallback when GROQ_API_KEY is not set (local dev).
+    """
+    import httpx
+    payload = {
+        "model":  settings.OLLAMA_MODEL or "llama3.1:8b",
+        "prompt": f"{SOAP_SYSTEM_PROMPT}\n\n{prompt}",
+        "stream": False,
+        "format": "json",
+    }
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        response = await client.post(
+            f"{settings.OLLAMA_BASE_URL}/api/generate",
+            json=payload,
+        )
+        response.raise_for_status()
+        return response.json().get("response", "")
 
 
 async def soap_generator_node(state: AgentState) -> dict:
-    """Generates SOAP note from transcript + entities using Ollama/Groq."""
+    """Generates SOAP note from transcript + entities using Groq or Ollama."""
     transcript = state.get("english_transcript") or state.get("raw_transcript", "")
-    entities = state.get("entities") or {}
+    entities   = state.get("entities") or {}
 
     if not transcript:
         return {"soap_note": None, "error": "No transcript available for SOAP generation"}
 
-    llm = get_llm()
     prompt = build_soap_prompt(transcript, entities)
 
-    messages = [
-        SystemMessage(content=SOAP_SYSTEM_PROMPT),
-        HumanMessage(content=prompt),
-    ]
-
     try:
-        response = await asyncio.to_thread(llm.invoke, messages)
-        soap_note = parse_soap_response(response.content)
+        if settings.GROQ_API_KEY:
+            response_text = await _call_groq(prompt)
+        else:
+            response_text = await _call_ollama(prompt)
+
+        soap_note = parse_soap_response(response_text)
         return {"soap_note": soap_note}
+
     except Exception as e:
+        import structlog
+        structlog.get_logger().error("soap_generation_failed", error=str(e))
         return {
             "error": f"SOAP generation failed: {str(e)}",
             "soap_note": {
-                "subjective": "Generation failed — manual entry required",
-                "objective": "Generation failed — manual entry required",
-                "assessment": "Generation failed — manual entry required",
-                "plan": "Generation failed — manual entry required",
+                "subjective":  "Generation failed — manual entry required",
+                "objective":   "Generation failed — manual entry required",
+                "assessment":  "Generation failed — manual entry required",
+                "plan":        "Generation failed — manual entry required",
                 "icd10_codes": [],
-                "confidence": 0.0,
+                "confidence":  0.0,
             },
         }
