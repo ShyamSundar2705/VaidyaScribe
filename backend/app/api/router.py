@@ -257,8 +257,12 @@ async def export_pdf(
         select(ConsultationSession).where(ConsultationSession.id == note.session_id)
     )
     from app.services.pdf_service import generate_pdf
-    pdf_path = await generate_pdf(note, sess_result.scalar_one_or_none())
-    return FileResponse(pdf_path, media_type="application/pdf",
+    from app.core.config import settings
+    result_path = await generate_pdf(note, sess_result.scalar_one_or_none())
+    if settings.use_s3:
+        from fastapi.responses import RedirectResponse
+        return RedirectResponse(url=result_path)
+    return FileResponse(result_path, media_type="application/pdf",
                         filename=f"soap_{note.id[:8]}.pdf")
 
 
@@ -283,8 +287,12 @@ async def export_fhir(
         select(ConsultationSession).where(ConsultationSession.id == note.session_id)
     )
     from app.services.fhir_service import export_fhir_json
-    fhir_path = await export_fhir_json(note, sess_result.scalar_one_or_none())
-    return FileResponse(fhir_path, media_type="application/json",
+    from app.core.config import settings
+    result_path = await export_fhir_json(note, sess_result.scalar_one_or_none())
+    if settings.use_s3:
+        from fastapi.responses import RedirectResponse
+        return RedirectResponse(url=result_path)
+    return FileResponse(result_path, media_type="application/json",
                         filename=f"fhir_{note.id[:8]}.json")
 
 

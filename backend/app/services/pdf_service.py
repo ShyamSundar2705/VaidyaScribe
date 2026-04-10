@@ -110,7 +110,9 @@ async def generate_soap_pdf(note) -> bytes:
             tamil_summary=note.tamil_summary,
         )
 
-        return HTML(string=html).write_pdf()
+        pdf_bytes = HTML(string=html).write_pdf()
+        from app.services.storage_service import save_pdf
+        return await save_pdf(note.id, pdf_bytes)
 
     except ImportError:
         # WeasyPrint not available — return simple text PDF placeholder

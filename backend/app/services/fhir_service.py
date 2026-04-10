@@ -98,11 +98,8 @@ def build_fhir_bundle(note: ClinicalNote, session: ConsultationSession) -> dict:
 
 
 async def export_fhir_json(note: ClinicalNote, session: ConsultationSession) -> str:
-    """Saves FHIR bundle to data/ and returns the file path."""
-    import os
+    """Saves FHIR bundle to local file or S3. Returns path or presigned URL."""
     bundle = build_fhir_bundle(note, session)
-    path = f"data/fhir_{note.id}.json"
-    os.makedirs("data", exist_ok=True)
-    with open(path, "w") as f:
-        json.dump(bundle, f, indent=2)
-    return path
+    fhir_json = json.dumps(bundle, indent=2)
+    from app.services.storage_service import save_fhir
+    return await save_fhir(note.id, fhir_json)
