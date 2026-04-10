@@ -56,7 +56,7 @@ echo "[4/6] Skipping .env creation (already exists)"
 #echo "    - DATABASE_URL (RDS endpoint if using PostgreSQL)"
 #echo "    - AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY + S3_BUCKET_NAME (if using S3)"
 #echo ""
-#read -p "Press ENTER after editing .env to continue..."'''
+#read -p "Press ENTER after editing .env to continue..."
 
 # ─── 5. Build and start ───────────────────────────────────────────
 echo "[5/6] Building and starting services..."
