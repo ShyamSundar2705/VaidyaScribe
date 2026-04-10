@@ -20,7 +20,7 @@ services:
       DATABASE_URL: sqlite+aiosqlite:///./data/vaidyascribe.db
       LANCEDB_URI: ./data/lancedb
     volumes:
-      - app_data:/app/data
+      - app_data:/app/backend/data
     ports:
       - "8000:8000"
     depends_on:
