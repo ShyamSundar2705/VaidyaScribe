@@ -14,12 +14,12 @@ echo "[1/6] Installing system packages..."
 if command -v dnf &>/dev/null; then
     # Amazon Linux 2023
     sudo dnf update -y
-    sudo dnf install -y docker git curl
+    sudo dnf install -y docker git
     sudo dnf install -y python3-pip
 else
     # Ubuntu 22.04
     sudo apt-get update -y
-    sudo apt-get install -y docker.io docker-compose-plugin git curl python3-pip
+    sudo apt-get install -y docker.io docker-compose-plugin git python3-pip
 fi
 
 # ─── 2. Docker ────────────────────────────────────────────────────
