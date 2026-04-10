@@ -43,8 +43,8 @@ git clone https://github.com/ShyamSundar2705/VaidyaScribe.git
 cd VaidyaScribe
 
 # ─── 4. Environment file ──────────────────────────────────────────
-'''echo "[4/6] Creating .env file..."
-cp .env.example .env
+echo "[4/6] Skipping .env creation (already exists)"
+#cp .env.example .env
 
 echo ""
 echo ">>> IMPORTANT: Edit .env now with your values:"
