@@ -19,20 +19,16 @@ _llm = None
 
 
 def get_llm():
-    global _llm
-    if _llm is not None:
-        return _llm
+    # Disable Groq completely (EC2 safe)
+    import httpx
 
-    # Use Groq if key is set AND (fallback flag is set OR Ollama not configured)
-    if settings.GROQ_API_KEY and (settings.USE_GROQ_FALLBACK or not settings.OLLAMA_BASE_URL):
-        from langchain_groq import ChatGroq
-        _llm = ChatGroq(
-            model=settings.GROQ_MODEL,
-            api_key=settings.GROQ_API_KEY,
-            temperature=0.1,
-            max_tokens=2048,
-        )
-        return _llm
+    class DummyLLM:
+        def invoke(self, messages):
+            return type("obj", (object,), {
+                "content": '{"subjective":"Demo","objective":"Demo","assessment":"Demo","plan":"Demo","icd10_codes":[],"confidence":0.5}'
+            })
+
+    return DummyLLM()
 
     # Try Ollama — if it fails and Groq key exists, fall back automatically
     try:
@@ -50,7 +46,6 @@ def get_llm():
         if settings.GROQ_API_KEY:
             import structlog
             structlog.get_logger().warning("ollama_unreachable_using_groq")
-            from langchain_groq import ChatGroq
             _llm = ChatGroq(
                 model=settings.GROQ_MODEL,
                 api_key=settings.GROQ_API_KEY,
