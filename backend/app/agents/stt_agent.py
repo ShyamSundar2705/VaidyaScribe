@@ -29,28 +29,34 @@ STT_TIMEOUT_SECONDS = 300  # 5 min hard timeout for local fallback
 
 async def _transcribe_groq(audio_path: str) -> tuple[str, str]:
     """
-    Transcribe via Groq Whisper API.
-    Returns (transcript_text, detected_language).
-    Free tier: 7200 audio seconds/day. Get key: console.groq.com (no card).
+    Transcribe via Groq Whisper API using httpx directly.
+    Avoids groq SDK proxies conflict with httpx versions.
+    Free tier: 7200 audio seconds/day.
     """
-    from groq import Groq
-
-    client = Groq(api_key=settings.GROQ_API_KEY)
+    import httpx
 
     with open(audio_path, "rb") as f:
-        response = await asyncio.to_thread(
-            client.audio.transcriptions.create,
-            file=(os.path.basename(audio_path), f),
-            model="whisper-large-v3",
-            response_format="verbose_json",
-            language="en",        # force English output — Tamil words are
-                                  # phonetically transliterated (vandhu, valikuthu)
-                                  # NOT converted to Tamil script (which breaks pipeline)
-        )
+        audio_bytes = f.read()
 
-    text = response.text or ""
-    # When forcing language="en", Groq always reports "en"
-    # Detect Tamil-English mix from the actual words instead
+    filename = os.path.basename(audio_path)
+
+    def _call():
+        with httpx.Client(timeout=30.0) as client:
+            response = client.post(
+                "https://api.groq.com/openai/v1/audio/transcriptions",
+                headers={"Authorization": f"Bearer {settings.GROQ_API_KEY}"},
+                files={"file": (filename, audio_bytes, "audio/webm")},
+                data={
+                    "model": "whisper-large-v3",
+                    "response_format": "verbose_json",
+                    "language": "en",
+                },
+            )
+            response.raise_for_status()
+            return response.json()
+
+    result = await asyncio.to_thread(_call)
+    text = result.get("text", "")
     lang = "en"
     return text, lang
 
