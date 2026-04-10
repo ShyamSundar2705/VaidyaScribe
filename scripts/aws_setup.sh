@@ -39,7 +39,7 @@ echo "Docker Compose: $(docker compose version)"
 # ─── 3. Clone repo ────────────────────────────────────────────────
 echo "[3/6] Cloning repository..."
 cd /home/ec2-user 2>/dev/null || cd /home/ubuntu
-git clone https://github.com/YOUR_USERNAME/VaidyaScribe.git
+git clone https://github.com/ShyamSundar2705/VaidyaScribe.git
 cd vaidyascribe
 
 # ─── 4. Environment file ──────────────────────────────────────────
