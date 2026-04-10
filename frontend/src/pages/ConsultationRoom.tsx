@@ -5,6 +5,7 @@ import toast from "react-hot-toast";
 import { useAudioCapture, PipelineStep } from "../hooks/useAudioCapture";
 import { ConsentBanner } from "../components/ConsentBanner";
 import { useAppStore } from "../store/app.store";
+import { useAuthStore } from "../store/auth.store";
 
 const STEP_ORDER: PipelineStep[] = [
   "recording", "stt", "translation", "ner", "soap", "qa", "done",
@@ -22,9 +23,22 @@ const STEP_LABELS: Record<PipelineStep, string> = {
   error:       "Error",
 };
 
+// Polyfill for crypto.randomUUID — works on HTTP (EC2) and HTTPS
+function generateUUID(): string {
+  if (typeof crypto !== "undefined" && crypto.randomUUID) {
+    return crypto.randomUUID();
+  }
+  // Fallback for non-secure contexts (plain HTTP)
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+    const r = Math.random() * 16 | 0;
+    return (c === "x" ? r : (r & 0x3 | 0x8)).toString(16);
+  });
+}
+
 export function ConsultationRoom() {
   const navigate = useNavigate();
-  const { doctorId, sessionId, setSessionId, setLastResult, addToHistory } = useAppStore();
+  const { sessionId, setSessionId, setLastResult, addToHistory } = useAppStore();
+  const { doctorId } = useAuthStore();
   const [activeSessionId, setActiveSessionId] = useState(sessionId || "");
   const [consentDone, setConsentDone] = useState(false);
 
@@ -52,7 +66,7 @@ export function ConsultationRoom() {
   };
 
   const handleStartNew = () => {
-    const newId = crypto.randomUUID();
+    const newId = generateUUID();
     setSessionId(newId);
     setActiveSessionId(newId);
     setConsentDone(false);
